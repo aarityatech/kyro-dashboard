@@ -1,0 +1,1110 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Kyro Analytics — Thread Insights</title>
+<script src="assets/chart.umd.min.js"></script>
+<script src="assets/wordcloud2.min.js"></script>
+<script src="assets/dashboard_calc.js"></script>
+<script src="dashboard_data.js"></script>
+<style>
+  :root{
+    --bg:#0b1020; --bg2:#121a30; --card:#151d36; --card2:#1b2545;
+    --line:#27314f; --txt:#e6ebf5; --muted:#93a0bd; --muted2:#6b7796;
+    --accent:#36d399; --accent2:#22d3ee; --warn:#fbbf24; --bad:#f87171; --good:#34d399;
+    --p1:#36d399; --p2:#22d3ee; --p3:#818cf8; --p4:#f472b6; --p5:#fbbf24;
+    --p6:#fb923c; --p7:#a78bfa; --p8:#4ade80; --p9:#60a5fa; --p10:#f87171;
+    --radius:14px;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;padding:0;background:var(--bg);color:var(--txt);
+    font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+    font-size:14px;line-height:1.45;-webkit-font-smoothing:antialiased}
+  a{color:var(--accent2)}
+  .topbar{position:sticky;top:0;z-index:30;background:linear-gradient(180deg,#0d1430,#0b1020);
+    border-bottom:1px solid var(--line);padding:14px 22px;display:flex;align-items:center;gap:16px;flex-wrap:wrap}
+  .brand{display:flex;align-items:center;gap:12px}
+  .logo{width:34px;height:34px;border-radius:9px;background:linear-gradient(135deg,var(--accent),var(--accent2));
+    display:grid;place-items:center;font-weight:800;color:#06241b;font-size:17px}
+  .brand h1{font-size:16px;margin:0;font-weight:700;letter-spacing:.2px}
+  .brand .sub{font-size:11.5px;color:var(--muted);margin-top:1px}
+  .scope{margin-left:auto;display:flex;gap:18px;flex-wrap:wrap;font-size:12px;color:var(--muted)}
+  .scope b{color:var(--txt);font-weight:600}
+  .scopetoggle{display:flex;border:1px solid var(--line);border-radius:9px;overflow:hidden;margin-left:14px}
+  .scopetoggle button{background:transparent;border:none;color:var(--muted);padding:7px 11px;font-size:11.5px;font-weight:700;cursor:pointer;white-space:nowrap}
+  .scopetoggle button.on{background:var(--card2);color:var(--txt)}
+  .scopetoggle button:hover{color:var(--txt)}
+  .scopetoggle button:first-child{border-right:1px solid var(--line)}
+  .dlbtn{margin-left:14px;display:flex;align-items:center;gap:6px;border:1px solid var(--line);border-radius:9px;background:transparent;color:var(--muted);padding:7px 12px;font-size:11.5px;font-weight:700;cursor:pointer;white-space:nowrap}
+  .dlbtn:hover{color:var(--txt);border-color:var(--txt)}
+  .dlbtn:disabled{opacity:.5;cursor:default}
+  .filters{display:flex;align-items:center;gap:12px;flex-wrap:wrap;font-size:11.5px;color:var(--muted);margin-left:10px}
+  .filters label{display:flex;align-items:center;gap:6px;font-weight:600;white-space:nowrap}
+  .filters input[type=date],.filters select{background:var(--bg2);border:1px solid var(--line);color:var(--txt);
+    border-radius:8px;padding:5px 8px;font-size:12px;font-family:inherit;color-scheme:dark;max-width:200px}
+  .filters button{background:var(--card2);border:1px solid var(--line);color:var(--muted);border-radius:8px;
+    padding:5px 10px;font-size:11px;font-weight:700;cursor:pointer}
+  .filters button:hover{color:var(--txt)}
+  .filterchip{background:rgba(129,140,248,.15);color:var(--p3);padding:2px 8px;border-radius:20px;font-size:10.5px;font-weight:700}
+  .tabs{display:flex;gap:4px;padding:10px 16px 0;background:var(--bg);
+    border-bottom:1px solid var(--line);position:sticky;top:64px;z-index:20;overflow-x:auto}
+  .tab{padding:9px 15px;border:none;background:transparent;color:var(--muted);cursor:pointer;
+    font-size:13px;font-weight:600;border-radius:9px 9px 0 0;white-space:nowrap;border-bottom:2px solid transparent}
+  .tab:hover{color:var(--txt)}
+  .tab.active{color:var(--txt);background:var(--card);border-bottom:2px solid var(--accent)}
+  main{padding:22px;max-width:1500px;margin:0 auto}
+  .panel{display:none}
+  .panel.active{display:block;animation:fade .25s ease}
+  @keyframes fade{from{opacity:0;transform:translateY(4px)}to{opacity:1;transform:none}}
+  .grid{display:grid;gap:16px}
+  .g2{grid-template-columns:repeat(2,1fr)}
+  .g3{grid-template-columns:repeat(3,1fr)}
+  .g4{grid-template-columns:repeat(4,1fr)}
+  @media(max-width:1100px){.g3,.g4{grid-template-columns:repeat(2,1fr)}}
+  @media(max-width:680px){.g2,.g3,.g4{grid-template-columns:1fr}}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:var(--radius);padding:16px 18px}
+  .card h3{margin:0 0 2px;font-size:13.5px;font-weight:700}
+  .card .desc{font-size:11.5px;color:var(--muted2);margin:0 0 12px}
+  .span2{grid-column:span 2}.span3{grid-column:span 3}.span4{grid-column:span 4}
+  @media(max-width:1100px){.span3,.span4{grid-column:span 2}}
+  @media(max-width:680px){.span2,.span3,.span4{grid-column:span 1}}
+  /* KPI */
+  .kpi{background:var(--card);border:1px solid var(--line);border-radius:var(--radius);padding:15px 16px;position:relative;overflow:hidden}
+  .kpi .label{font-size:11.5px;color:var(--muted);font-weight:600;text-transform:uppercase;letter-spacing:.4px}
+  .kpi .val{font-size:27px;font-weight:800;margin-top:6px;line-height:1.05}
+  .kpi .foot{font-size:11.5px;color:var(--muted2);margin-top:4px}
+  .kpi .bar{position:absolute;left:0;top:0;bottom:0;width:3px;background:var(--accent)}
+  .kpi.na{opacity:.92}
+  .kpi.na .val{color:var(--muted)}
+  .kpi.warn .bar{background:var(--warn)} .kpi.bad .bar{background:var(--bad)} .kpi.cy .bar{background:var(--accent2)}
+  .kpi.pp .bar{background:var(--p3)} .kpi.pk .bar{background:var(--p4)}
+  .chart-wrap{position:relative;height:300px}
+  .chart-wrap.tall{height:360px}
+  .chart-wrap.short{height:240px}
+  canvas.wc{width:100%;height:380px;display:block}
+  table{width:100%;border-collapse:collapse;font-size:12.5px}
+  th,td{text-align:left;padding:8px 10px;border-bottom:1px solid var(--line);white-space:nowrap}
+  th{color:var(--muted);font-weight:600;font-size:11px;text-transform:uppercase;letter-spacing:.3px;cursor:pointer;user-select:none}
+  th:hover{color:var(--txt)}
+  td.num,th.num{text-align:right;font-variant-numeric:tabular-nums}
+  tbody tr:hover{background:var(--card2)}
+  .scroll{max-height:430px;overflow:auto;border-radius:10px;border:1px solid var(--line)}
+  .scroll table th{position:sticky;top:0;background:var(--bg2);z-index:1}
+  .tag{display:inline-block;padding:2px 8px;border-radius:20px;font-size:10.5px;font-weight:600;background:var(--card2);color:var(--muted)}
+  .pill{padding:1px 7px;border-radius:6px;font-size:10.5px;font-weight:700}
+  .pill.done{background:rgba(52,211,153,.15);color:var(--good)}
+  .pill.cancelled{background:rgba(251,191,36,.15);color:var(--warn)}
+  .pill.errored{background:rgba(248,113,113,.15);color:var(--bad)}
+  .note{background:linear-gradient(90deg,rgba(251,191,36,.08),transparent);border:1px solid rgba(251,191,36,.25);
+    border-left:3px solid var(--warn);border-radius:10px;padding:11px 14px;font-size:12.5px;color:#e9d8a6;margin-bottom:16px}
+  .note b{color:#fde68a}
+  .legend{display:flex;gap:14px;flex-wrap:wrap;font-size:11.5px;color:var(--muted);margin-top:8px}
+  .legend span{display:inline-flex;align-items:center;gap:5px}
+  .dot{width:9px;height:9px;border-radius:3px;display:inline-block}
+  .filterbox{width:100%;padding:8px 11px;background:var(--bg2);border:1px solid var(--line);border-radius:9px;
+    color:var(--txt);font-size:12.5px;margin-bottom:10px}
+  .sec-title{font-size:12px;color:var(--muted);font-weight:700;text-transform:uppercase;letter-spacing:.5px;margin:6px 2px 2px}
+  .big{font-size:34px;font-weight:800}
+  .inline-stats{display:flex;gap:20px;flex-wrap:wrap;margin-top:6px}
+  .inline-stats div .n{font-size:20px;font-weight:800}
+  .inline-stats div .l{font-size:11px;color:var(--muted)}
+  .qtext{white-space:normal;max-width:520px;color:var(--txt)}
+  .uid{font-family:ui-monospace,Menlo,monospace;font-size:11px;color:var(--muted2)}
+  .qrow{cursor:pointer}
+  .qrow .caret{display:inline-block;transition:transform .15s;color:var(--muted);font-size:11px}
+  .qrow.open .caret{transform:rotate(90deg)}
+  .qrow.open{background:var(--card2)}
+  .qdetail>td{background:var(--bg2);padding:0;border-bottom:2px solid var(--line)}
+  .transcript{padding:12px 16px;display:flex;flex-direction:column;gap:7px;max-height:440px;overflow:auto}
+  .ti{border-left:3px solid var(--line);padding:6px 11px;border-radius:0 8px 8px 0;background:var(--card)}
+  .ti.reason{border-color:var(--p7)} .ti.tool{border-color:var(--p2)} .ti.resp{border-color:var(--p1)}
+  .ti .lbl{font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.4px;color:var(--muted)}
+  .ti.reason .lbl{color:var(--p7)} .ti.tool .lbl{color:var(--p2)} .ti.resp .lbl{color:var(--p1)}
+  .ti .body{font-size:12px;color:var(--txt);white-space:pre-wrap;margin-top:3px;line-height:1.5;word-break:break-word}
+  .ti.reason .body{color:var(--muted);font-style:italic}
+  .ti code{font-family:ui-monospace,Menlo,monospace;font-size:11px;background:var(--bg);padding:2px 6px;border-radius:5px;color:var(--accent2);white-space:pre-wrap;word-break:break-word;display:block;margin-top:2px}
+  .ti .meta{font-size:10px;color:var(--muted2);font-weight:600}
+  .empty-tr{color:var(--muted2);font-size:12px;padding:12px 16px}
+  .tr-sep{font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.4px;color:var(--muted);margin:8px 0 2px;padding-top:8px;border-top:1px dashed var(--line)}
+  .tr-more{font-size:11.5px;color:var(--accent2);font-style:italic;padding:5px 2px 2px}
+  footer{color:var(--muted2);font-size:11.5px;text-align:center;padding:26px}
+  .empty{color:var(--muted2);font-size:12.5px;padding:20px;text-align:center}
+</style>
+</head>
+<body>
+<div class="topbar">
+  <div class="brand">
+    <div class="logo">K</div>
+    <div>
+      <h1>Kyro Analytics</h1>
+      <div class="sub">Agentic thread insights · trading assistant</div>
+    </div>
+  </div>
+  <div class="scope" id="scopeBar"></div>
+  <button class="dlbtn" id="dlBtn" title="Download the raw data file for the current scope">⬇ Download data</button>
+</div>
+
+<nav class="tabs" id="tabs"></nav>
+
+<main id="main"></main>
+
+<footer id="footer"></footer>
+
+<script>
+// ============================================================ data + utils
+// RAW payloads ship per-turn records; buildData (assets/dashboard_calc.js)
+// recomputes every aggregate client-side so the date/persona filters work.
+const RAW = window.DASHBOARD_DATA;
+const CALCOK = (typeof window.KyroCalc!=='undefined');
+if(!RAW || !CALCOK){ document.body.innerHTML='<p style="padding:40px">dashboard_data.js / assets/dashboard_calc.js not found. Run <code>python3 build_dashboard.py</code> first.</p>'; }
+let D = null;   // current aggregated view (rebuilt on every filter change)
+const LIBOK = (typeof Chart!=='undefined');
+
+const PAL=['#36d399','#22d3ee','#818cf8','#f472b6','#fbbf24','#fb923c','#a78bfa','#4ade80','#60a5fa','#f87171','#2dd4bf','#c084fc'];
+const $ = (s,r=document)=>r.querySelector(s);
+const fmt = n => (n==null)?'—':n.toLocaleString('en-IN');
+const fmtTok = n => n==null?'—': n>=1e6 ? (n/1e6).toFixed(2)+'M' : n>=1e3 ? (n/1e3).toFixed(1)+'k' : ''+n;
+const fmtMs = n => n==null?'—': n>=1000 ? (n/1000).toFixed(n>=10000?0:1)+'s' : Math.round(n)+'ms';
+const fmtSize = n => n==null?'—': n>=1e6 ? (n/1e6).toFixed(1)+'MB' : n>=1024 ? (n/1024).toFixed(1)+'KB' : n+'B';
+const fmtUSD = v => v==null?'—': v>=1?'$'+v.toFixed(2): v>=0.01?'$'+v.toFixed(3):'$'+v.toFixed(4);
+const fmtDate = ms => { const d=new Date(ms); return d.toLocaleString('en-IN',{day:'2-digit',month:'short',hour:'2-digit',minute:'2-digit',hour12:true,timeZone:'Asia/Kolkata'}); };
+const esc = s => (s==null?'':String(s)).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+// day keys are already IST calendar dates ('YYYY-MM-DD'); parse as UTC midnight and
+// format in UTC so the label matches the IST bucket for viewers in any timezone.
+const dmonth = s => new Date(s+'T00:00:00Z').toLocaleDateString('en-IN',{day:'2-digit',month:'short',timeZone:'UTC'});
+const agoStr = ms => { if(!ms) return ''; let s=Math.max(0,(Date.now()-ms)/1000);
+  if(s<90) return Math.round(s)+'s ago'; let v=s/60; if(v<90) return Math.round(v)+'m ago'; v/=60; if(v<36) return Math.round(v)+'h ago'; return Math.round(v/24)+'d ago'; };
+
+if(LIBOK){
+  Chart.defaults.color='#93a0bd';
+  Chart.defaults.font.family='-apple-system,Segoe UI,Roboto,sans-serif';
+  Chart.defaults.font.size=11.5;
+  Chart.defaults.plugins.legend.labels.boxWidth=11;
+  Chart.defaults.plugins.legend.labels.boxHeight=11;
+  Chart.defaults.plugins.legend.labels.usePointStyle=true;
+  Chart.defaults.plugins.tooltip.backgroundColor='#0b1020';
+  Chart.defaults.plugins.tooltip.borderColor='#27314f';
+  Chart.defaults.plugins.tooltip.borderWidth=1;
+  Chart.defaults.plugins.tooltip.padding=10;
+  Chart.defaults.scale.grid.color='rgba(39,49,79,.6)';
+  Chart.defaults.scale.border.color='#27314f';
+}
+const GRID={color:'rgba(39,49,79,.6)'};
+const charts={};
+function chart(id,cfg){ const c=document.getElementById(id); if(!c||!LIBOK)return; if(charts[id])charts[id].destroy(); charts[id]=new Chart(c,cfg); }
+
+function bar(id,labels,data,{horizontal=false,color=PAL[0],colors=null,fmtv=fmt,label='',stacked=false}={}){
+  chart(id,{type:'bar',data:{labels,datasets:[{label,data,backgroundColor:colors||color,borderRadius:5,maxBarThickness:46}]},
+    options:{indexAxis:horizontal?'y':'x',responsive:true,maintainAspectRatio:false,
+      plugins:{legend:{display:false},tooltip:{callbacks:{label:c=>' '+fmtv(c.parsed[horizontal?'x':'y'])}}},
+      scales:{x:{grid:{display:horizontal,...GRID},ticks:{autoSkip:true,maxRotation:0,callback:function(v){const l=this.getLabelForValue(v);return horizontal?fmtv(v):(l&&l.length>14?l.slice(0,13)+'…':l)}}},
+              y:{grid:{display:!horizontal,...GRID},beginAtZero:true,ticks:{callback:function(v){const l=this.getLabelForValue(v);return horizontal?(l&&l.length>22?l.slice(0,21)+'…':l):fmtv(v)}}}}}});
+}
+function doughnut(id,labels,data,{colors=PAL,fmtv=fmt}={}){
+  chart(id,{type:'doughnut',data:{labels,datasets:[{data,backgroundColor:colors,borderColor:'#151d36',borderWidth:2}]},
+    options:{responsive:true,maintainAspectRatio:false,cutout:'62%',
+      plugins:{legend:{position:'right',labels:{padding:10}},tooltip:{callbacks:{label:c=>' '+c.label+': '+fmtv(c.parsed)}}}}});
+}
+function lineChart(id,labels,datasets,{fmtv=fmt}={}){
+  chart(id,{type:'line',data:{labels,datasets:datasets.map((d,i)=>({tension:.32,borderWidth:2,pointRadius:3,pointHoverRadius:5,
+    borderColor:d.color||PAL[i],backgroundColor:(d.fill?(d.color||PAL[i])+'22':'transparent'),fill:!!d.fill,...d}))},
+    options:{responsive:true,maintainAspectRatio:false,interaction:{mode:'index',intersect:false},
+      plugins:{legend:{display:datasets.length>1,position:'top'},tooltip:{callbacks:{label:c=>' '+c.dataset.label+': '+fmtv(c.parsed.y)}}},
+      scales:{x:{grid:GRID},y:{beginAtZero:true,grid:GRID,ticks:{callback:fmtv}}}}});
+}
+
+// ============================================================ scaffold
+const TABS=[
+  ['overview','Overview'],['activity','Activity'],['engagement','Engagement'],['users','Users'],['personas','Personas'],['queries','Queries'],
+  ['conversations','Conversations'],['interactions','Interactions'],['tools','Tools'],
+  ['performance','Performance'],['tokens','Tokens'],['outcomes','Outcomes & Reliability'],['quality','Quality / Eval']
+];
+let m=null;
+const personaLabel = p => !p||p==='unclassified' ? 'Unclassified' : p.replace(/\b\w/g,c=>c.toUpperCase());
+function applyChrome(){
+  const ageMin = m.generated_at_ms ? (Date.now()-m.generated_at_ms)/60000 : null;
+  const freshCol = ageMin==null ? 'var(--muted)' : (ageMin>75 ? 'var(--bad)' : 'var(--good)');
+  const scopeTxt = m.scope==='all'
+    ? `Users: <b>${m.users_with_data}</b> (incl. internal)`
+    : `Users: <b>${m.users_with_data}</b> external${m.internal_users_excluded?` · <b>${m.internal_users_excluded}</b> internal hidden`:''}`;
+  const filt=[];
+  if(FILTERS.persona) filt.push(`persona: ${esc(personaLabel(FILTERS.persona))}`);
+  if(filtersNarrowDates()) filt.push('date range');
+  $('#scopeBar').innerHTML=
+    `<div style="display:flex;align-items:center;gap:6px"><span class="dot" style="background:${freshCol}"></span>Data as of <b>${m.generated_at||'—'}</b>${m.generated_at_ms?` <span style="color:var(--muted2)">· ${agoStr(m.generated_at_ms)}</span>`:''}</div>`+
+    `<div>${scopeTxt}</div>`+
+    `<div>Conversations: <b>${fmt(m.filtered_threads)}</b></div>`+
+    `<div>Turns: <b>${fmt(m.filtered_turns)}</b></div>`+
+    `<div>${m.date_min||'—'} → ${m.date_max||'—'} <b>(${m.n_days}d)</b></div>`+
+    `<div>${m.timezone}</div>`+
+    (filt.length?`<div><span class="filterchip">⧩ filtered — ${filt.join(' · ')}</span></div>`:'');
+  $('#footer').innerHTML=`Data as of <b>${m.generated_at||'—'}</b> · ${m.scope==='all'?('all '+m.users_with_data+' users incl. internal'):('external users only — '+(m.internal_users_excluded||0)+' internal excluded')} · ${m.filtered_turns} turns${filt.length?' (filters active: '+filt.join(', ')+')':''} · generated from ${fmt(m.total_turn_files)} archived turn files · all timestamps ${m.timezone}. Re-run <code>refresh.sh</code> to update.`;
+}
+
+const tabsEl=$('#tabs'), mainEl=$('#main');
+TABS.forEach(([id,label],i)=>{
+  const b=document.createElement('button'); b.className='tab'+(i===0?' active':''); b.textContent=label; b.dataset.t=id;
+  b.onclick=()=>activate(id); tabsEl.appendChild(b);
+  const p=document.createElement('section'); p.className='panel'+(i===0?' active':''); p.id='panel-'+id; mainEl.appendChild(p);
+});
+const rendered={};
+let activeTab='overview';
+function activate(id){
+  activeTab=id;
+  document.querySelectorAll('.tab').forEach(t=>t.classList.toggle('active',t.dataset.t===id));
+  document.querySelectorAll('.panel').forEach(p=>p.classList.toggle('active',p.id==='panel-'+id));
+  if(!rendered[id]){ (RENDER[id]||(()=>{}))(); rendered[id]=true; }
+  // charts created while hidden may need resize
+  setTimeout(()=>Object.values(charts).forEach(c=>{try{c.resize()}catch(e){}}),30);
+}
+function H(id,html){ document.getElementById('panel-'+id).innerHTML=html; }
+function kpi(label,val,foot,cls=''){return `<div class="kpi ${cls}"><div class="bar"></div><div class="label">${label}</div><div class="val">${val}</div>${foot?`<div class="foot">${foot}</div>`:''}</div>`;}
+function legend(items){return `<div class="legend">${items.map((x,i)=>`<span><span class="dot" style="background:${x.c||PAL[i]}"></span>${x.t}</span>`).join('')}</div>`;}
+
+// shared turn-transcript renderer (used by Queries + Quality tabs)
+const tItem=it=>{
+  if(it.k==='reason') return `<div class="ti reason"><span class="lbl">🧠 reasoning</span><div class="body">${esc(it.t)}</div></div>`;
+  if(it.k==='tool') return `<div class="ti tool"><span class="lbl">🔧 ${esc(it.name)}</span>${it.err?'<span class="meta" style="color:var(--bad)"> · error</span>':''}${it.in?`<div class="body">input <code>${esc(it.in)}</code></div>`:''}${it.out?`<div class="body">output <code>${esc(it.out)}</code></div>`:''}</div>`;
+  if(it.k==='resp') return `<div class="ti resp"><span class="lbl">💬 response</span><div class="body">${esc(it.t)}</div></div>`;
+  return '';
+};
+// st 1 = responses only; st 2 = also reasoning & tool calls
+const transcriptHtml=(r,st)=>{
+  const d=(r&&r.detail)||[];
+  if(!d.length) return '<div class="empty-tr">No detail recorded for this turn.</div>';
+  const resps=d.filter(it=>it.k==='resp'), rest=d.filter(it=>it.k!=='resp');
+  let h = resps.length ? resps.map(tItem).join('') : '<div class="empty-tr">No text response in this turn.</div>';
+  if(st>=2){ h += '<div class="tr-sep">Reasoning &amp; tool calls</div>'; h += rest.length ? rest.map(tItem).join('') : '<div class="empty-tr">No reasoning / tool calls.</div>'; }
+  else if(rest.length){ h += '<div class="tr-more">▾ Click again to show reasoning &amp; tool calls</div>'; }
+  return `<div class="transcript">${h}</div>`;
+};
+// attach the 3-state (closed → responses → +reasoning/tools) expand handler to a turn table
+function wireTurnExpand(tbody,list){
+  tbody.onclick=e=>{
+    const row=e.target.closest('.qrow'); if(!row) return;
+    const det=row.nextElementSibling; if(!det||!det.classList.contains('qdetail')) return;
+    let st=((+row.dataset.st)||0)+1; if(st>2) st=0;
+    row.dataset.st=st; row.classList.toggle('open', st>0);
+    if(st===0){ det.style.display='none'; det.firstElementChild.innerHTML=''; }
+    else { det.style.display=''; det.firstElementChild.innerHTML=transcriptHtml(list[+row.dataset.i], st); }
+  };
+}
+
+// ---- global filters: scope (external/all) × date range × persona ------------
+// Every metric on the dashboard is recomputed from the raw turns whenever any
+// of these change (buildData in assets/dashboard_calc.js).
+let curScope='external', allLoading=false, scopeToggle=null;
+const FILTERS={ persona:'', from:null, to:null };   // dates as 'YYYY-MM-DD' (IST)
+const IST_OFF=19800000;
+const todayIST=()=>new Date(Date.now()+IST_OFF).toISOString().slice(0,10);
+const istDayStartMs=d=>Date.parse(d+'T00:00:00Z')-IST_OFF;
+const istDayEndMs=d=>istDayStartMs(d)+86399999;
+function currentRaw(){ return curScope==='all' ? window.DASHBOARD_DATA_ALL : window.DASHBOARD_DATA; }
+function personaOf(raw,uid){ return ((raw.ident[uid]||{}).persona)||'unclassified'; }
+function filtersNarrowDates(){
+  const raw=currentRaw();
+  return (FILTERS.from && raw.meta.date_min && FILTERS.from>raw.meta.date_min)
+      || (FILTERS.to && raw.meta.date_max && FILTERS.to<raw.meta.date_max);
+}
+function recompute(){
+  const raw=currentRaw();
+  let ts=raw.turns;
+  // Only filter when a bound actually narrows the full range — at the default
+  // (from=beginning, to=now) this is a true no-op, so the default view matches
+  // unfiltered aggregation exactly (incl. any turns with a missing timestamp).
+  if(FILTERS.from && raw.meta.date_min && FILTERS.from>raw.meta.date_min){ const f=istDayStartMs(FILTERS.from); ts=ts.filter(t=>t.ts_ms>=f); }
+  if(FILTERS.to && raw.meta.date_max && FILTERS.to<raw.meta.date_max){ const e=istDayEndMs(FILTERS.to); ts=ts.filter(t=>t.ts_ms<=e); }
+  if(FILTERS.persona) ts=ts.filter(t=>personaOf(raw,t.user_id)===FILTERS.persona);
+  D=window.KyroCalc.buildData(raw,ts);
+  m=D.meta;
+  applyChrome();
+  Object.keys(charts).forEach(k=>{ try{charts[k].destroy()}catch(e){} delete charts[k]; });
+  Object.keys(rendered).forEach(k=>delete rendered[k]);
+  activate(activeTab);
+}
+
+// ---- filter bar (date range + persona) --------------------------------------
+function personaOptions(raw){
+  const counts=new Map();
+  for(const uid of new Set(raw.turns.map(t=>t.user_id))){
+    const p=personaOf(raw,uid);
+    counts.set(p,(counts.get(p)||0)+1);
+  }
+  // most users first, Unclassified pinned last
+  return [...counts.entries()].sort((a,b)=>
+    (a[0]==='unclassified')-(b[0]==='unclassified') || b[1]-a[1]);
+}
+function buildFilterBar(){
+  const bar=document.createElement('div'); bar.className='filters'; bar.id='filterBar';
+  bar.innerHTML=
+    `<label title="Metrics include turns from this IST date onward">From <input type="date" id="f-from"></label>`+
+    `<label title="Metrics include turns up to end of this IST date">To <input type="date" id="f-to"></label>`+
+    `<label title="Only include users with this primary trading persona">Persona <select id="f-persona"></select></label>`+
+    `<button id="f-reset" title="Reset to full date range + all personas">Reset</button>`;
+  document.querySelector('.topbar').insertBefore(bar,scopeToggle||$('#scopeBar'));
+  $('#f-from').onchange=e=>{ FILTERS.from=e.target.value||null;
+    const to=$('#f-to'); if(to.value&&e.target.value&&to.value<e.target.value){to.value=e.target.value;FILTERS.to=to.value;} recompute(); };
+  $('#f-to').onchange=e=>{ FILTERS.to=e.target.value||null;
+    const fr=$('#f-from'); if(fr.value&&e.target.value&&e.target.value<fr.value){fr.value=e.target.value;FILTERS.from=fr.value;} recompute(); };
+  $('#f-persona').onchange=e=>{ FILTERS.persona=e.target.value; recompute(); };
+  $('#f-reset').onclick=()=>{ const raw=currentRaw();
+    FILTERS.persona=''; FILTERS.from=raw.meta.date_min; FILTERS.to=todayIST();
+    initFilterControls(); recompute(); };
+  // defaults: start = beginning of the data, end = now
+  FILTERS.from=currentRaw().meta.date_min; FILTERS.to=todayIST();
+  initFilterControls();
+}
+function initFilterControls(){
+  const raw=currentRaw();
+  const from=$('#f-from'), to=$('#f-to'), sel=$('#f-persona');
+  const tmax=todayIST();
+  from.min=raw.meta.date_min||''; from.max=tmax;
+  to.min=raw.meta.date_min||'';   to.max=tmax;
+  from.value=FILTERS.from||raw.meta.date_min||''; to.value=FILTERS.to||tmax;
+  FILTERS.from=from.value||null; FILTERS.to=to.value||null;
+  const opts=personaOptions(raw);
+  if(FILTERS.persona && !opts.some(([p])=>p===FILTERS.persona)) FILTERS.persona='';
+  sel.innerHTML=`<option value="">All personas</option>`+
+    opts.map(([p,c])=>`<option value="${esc(p)}"${FILTERS.persona===p?' selected':''}>${esc(personaLabel(p))} (${c})</option>`).join('');
+}
+
+// ---- scope toggle: External (default) <-> All users (incl. internal, lazy-loaded)
+function buildScopeToggle(){
+  if(!(RAW.meta&&RAW.meta.has_all_scope)) return;   // only the external file advertises the toggle
+  scopeToggle=document.createElement('div'); scopeToggle.className='scopetoggle';
+  scopeToggle.innerHTML=`<button data-s="external" class="on" title="External users only">External</button>`+
+    `<button data-s="all" title="Include internal users (loads a large data file on first use)">All + internal</button>`;
+  document.querySelector('.topbar').insertBefore(scopeToggle,$('#scopeBar'));
+  scopeToggle.querySelectorAll('button').forEach(b=>b.onclick=()=>setScope(b.dataset.s));
+}
+function setScopeButtons(s){ if(scopeToggle) scopeToggle.querySelectorAll('button').forEach(b=>b.classList.toggle('on',b.dataset.s===s)); }
+
+// ---- download the raw data file for the active scope --------------------------
+function saveBlob(name, text){
+  const url=URL.createObjectURL(new Blob([text],{type:'application/javascript'}));
+  const a=document.createElement('a'); a.href=url; a.download=name;
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(()=>URL.revokeObjectURL(url),1000);
+}
+async function downloadData(){
+  const all=curScope==='all';
+  const file=all?'dashboard_data_all.js':'dashboard_data.js';
+  const varname=all?'DASHBOARD_DATA_ALL':'DASHBOARD_DATA';
+  const btn=$('#dlBtn'); const label=btn.textContent; btn.disabled=true; btn.textContent='Preparing…';
+  try{
+    // Prefer the exact on-disk bytes (works when served over HTTP)…
+    const r=await fetch(file,{cache:'no-store'});
+    if(!r.ok) throw new Error('http '+r.status);
+    saveBlob(file, await r.text());
+  }catch(_){
+    // …fall back to reconstructing from the in-memory object (file:// / offline).
+    const obj=all?window.DASHBOARD_DATA_ALL:window.DASHBOARD_DATA;
+    if(!obj){ alert('Data for this scope is not loaded yet.'); }
+    else saveBlob(file, '// Auto-generated by build_dashboard.py — do not edit by hand.\nwindow.'+varname+' = '+JSON.stringify(obj)+';\n');
+  }finally{ btn.disabled=false; btn.textContent=label; }
+}
+function setScope(s){
+  if(s===curScope || allLoading) return;
+  if(s==='all' && !window.DASHBOARD_DATA_ALL){
+    allLoading=true; setScopeButtons('all');
+    $('#scopeBar').innerHTML='<div><span class="dot" style="background:var(--warn)"></span> Loading all-users data…</div>';
+    const sc=document.createElement('script'); sc.src='dashboard_data_all.js';
+    sc.onload=()=>{ allLoading=false; swapTo('all'); };
+    sc.onerror=()=>{ allLoading=false; setScopeButtons('external'); applyChrome();
+      alert('Could not load dashboard_data_all.js — run: python3 build_dashboard.py'); };
+    document.head.appendChild(sc); return;
+  }
+  swapTo(s);
+}
+function swapTo(s){
+  const oldMin=currentRaw().meta.date_min;
+  curScope=s; setScopeButtons(s);
+  // still at "beginning of data"? follow the new scope's beginning (the all-users
+  // archive starts earlier than external-only) instead of silently cutting turns
+  if(FILTERS.from===oldMin) FILTERS.from=currentRaw().meta.date_min;
+  initFilterControls();     // persona counts + date bounds differ per scope
+  recompute();
+}
+
+// ============================================================ renderers
+const RENDER={};
+
+RENDER.overview=()=>{
+  const k=D.kpis;
+  H('overview',`
+   <div class="grid g4" style="margin-bottom:16px">
+     ${kpi('Conversations',fmt(k.conversations),'distinct threads')}
+     ${kpi('Turns',fmt(k.turns),`${k.avg_turns_per_thread} avg / conversation`,'cy')}
+     ${kpi('Users analysed',fmt(k.users),m.scope==='all'?'incl. internal users':`external · ${m.internal_users_excluded} internal excluded`,'pp')}
+     ${kpi('Daily active users',k.avg_dau,`peak ${k.peak_dau} · over ${m.n_days} days`,'pk')}
+     ${kpi('Total tokens',fmtTok(k.total_tokens),`${D.tokens.cache_hit_ratio}% served from cache`)}
+     ${kpi('Tool calls',fmt(k.total_tool_calls),`${D.tools.total_unique_tools} unique tools`,'cy')}
+     ${kpi('UI interactions',fmt(k.client_interactions),'widgets, prompts, navigation','pp')}
+     ${kpi('Median turn time',fmtMs(k.median_latency_ms),'thinking + tools + (waits)','pk')}
+     ${kpi('Errored turns',fmt(k.errored_turns),(k.turns?(k.errored_turns/k.turns*100).toFixed(1):'0.0')+'% of turns',k.errored_turns?'bad':'')}
+     ${kpi('Cancelled turns',fmt(k.cancelled_turns),'user stopped the agent',k.cancelled_turns?'warn':'')}
+     ${kpi('👍 Likes',' N/A',' not in dataset','na')}
+     ${kpi('👎 Dislikes',' N/A',' not in dataset','na')}
+   </div>
+   <div class="grid g3">
+     <div class="card span1"><h3>Turns per day</h3><p class="desc">Daily activity volume (IST)</p><div class="chart-wrap short"><canvas id="ov-daily"></canvas></div></div>
+     <div class="card span1"><h3>Query intents</h3><p class="desc">What users come to Kyro for</p><div class="chart-wrap short"><canvas id="ov-intent"></canvas></div></div>
+     <div class="card span1"><h3>Turn outcomes</h3><p class="desc">How turns resolved</p><div class="chart-wrap short"><canvas id="ov-outcome"></canvas></div></div>
+   </div>`);
+  const dl=D.activity.daily;
+  bar('ov-daily',dl.map(d=>dmonth(d.date)),dl.map(d=>d.turns),{color:PAL[0]});
+  doughnut('ov-intent',D.queries.intents.map(i=>i.intent),D.queries.intents.map(i=>i.count));
+  const oc=D.outcomes.by_outcome, ocol={done:'#34d399',cancelled:'#fbbf24',errored:'#f87171'};
+  doughnut('ov-outcome',oc.map(o=>o.outcome),oc.map(o=>o.count),{colors:oc.map(o=>ocol[o.outcome]||PAL[3])});
+};
+
+RENDER.activity=()=>{
+  const dl=D.activity.daily;
+  H('activity',`
+   <div class="grid g2">
+     <div class="card"><h3>Turns & conversations started per day</h3><p class="desc">Daily volume (IST). Bars = turns, line = new conversations.</p><div class="chart-wrap"><canvas id="ac-daily"></canvas></div></div>
+     <div class="card"><h3>Daily active users</h3><p class="desc">Distinct active users per day</p><div class="chart-wrap"><canvas id="ac-dau"></canvas></div></div>
+     <div class="card"><h3>Activity by hour of day (IST)</h3><p class="desc">When users engage Kyro — aligned to market hours</p><div class="chart-wrap"><canvas id="ac-hour"></canvas></div></div>
+     <div class="card"><h3>Activity by day of week</h3><p class="desc">Weekday distribution of turns</p><div class="chart-wrap"><canvas id="ac-dow"></canvas></div></div>
+   </div>`);
+  chart('ac-daily',{data:{labels:dl.map(d=>dmonth(d.date)),datasets:[
+      {type:'bar',label:'Turns',data:dl.map(d=>d.turns),backgroundColor:PAL[0],borderRadius:5,order:2,maxBarThickness:50},
+      {type:'line',label:'Conversations started',data:dl.map(d=>d.threads_started),borderColor:PAL[3],backgroundColor:PAL[3],tension:.3,borderWidth:2,pointRadius:3,order:1}
+    ]},options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{position:'top'}},scales:{x:{grid:GRID},y:{beginAtZero:true,grid:GRID}}}});
+  bar('ac-dau',dl.map(d=>dmonth(d.date)),dl.map(d=>d.dau),{color:PAL[4]});
+  const h=D.activity.hourly;
+  bar('ac-hour',h.map(x=>String(x.hour).padStart(2,'0')),h.map(x=>x.count),{color:PAL[1]});
+  const dw=D.activity.dow;
+  bar('ac-dow',dw.map(x=>x.day),dw.map(x=>x.count),{color:PAL[2]});
+};
+
+RENDER.engagement=()=>{
+  const E=D.engagement;
+  if(!E){ H('engagement','<div class="empty">No engagement data — rebuild with build_dashboard.py.</div>'); return; }
+  const m1=E.m1.overall_pct;
+  H('engagement',`
+   <div class="note">Engagement & retention over a short window (<b>${m.n_days}</b> active days, ${m.date_min} → ${m.date_max}). Weekly/monthly cohorts are sparse here — read as directional, not statistical.</div>
+   <div class="grid g4" style="margin-bottom:16px">
+     ${kpi('Avg turns / day',E.avg_turns_per_day,'across active days')}
+     ${kpi('Turns / user / day',E.avg_turns_per_user_per_day,'per active user','cy')}
+     ${kpi('New-thread rate',E.new_thread_rate_avg,'new convos / active user / day','pp')}
+     ${kpi('M1 retention',m1==null?'N/A':m1+'%',m1==null?'needs 2+ months of data':`${E.m1.eligible_cohorts} eligible cohort(s)`,'pk')}
+     ${kpi('Turns using a tool',E.tool_invoked_pct+'%',`data-tool in ${E.data_tool_invoked_pct}%`)}
+     ${kpi('Turns invoking a skill',E.skill_invoked_pct+'%','load_skill called','cy')}
+     ${kpi('DAU/WAU stickiness',E.stickiness_avg+'%','avg (daily DAU ÷ trailing-7d WAU)','pp')}
+     ${kpi('Peak WAU',E.peak_wau,'distinct users in a week','pk')}
+   </div>
+   <div class="grid g2" style="margin-bottom:16px">
+     <div class="card"><h3>Turns by market slot (IST)</h3><p class="desc">Pre-market 12:00am–9:15 · During 9:15–3:30 · Post-market 3:30–12:00am · Weekend = Sat/Sun (all day)</p><div class="chart-wrap"><canvas id="en-slot"></canvas></div></div>
+     <div class="card"><h3>Retention — DAU/WAU stickiness</h3><p class="desc">Daily active users ÷ trailing-7-day active users (higher = users return more often)</p><div class="chart-wrap"><canvas id="en-stick"></canvas></div></div>
+   </div>
+   <div class="grid g2" style="margin-bottom:16px">
+     <div class="card"><h3>Daily active users — new vs returning</h3><p class="desc"><b>New</b> = user's first-ever active day; <b>returning</b> = seen before</p><div class="chart-wrap"><canvas id="en-dau"></canvas></div></div>
+     <div class="card"><h3>Weekly active users — new vs returning</h3><p class="desc">ISO weeks (label = week-start Mon). New = user's first active week</p><div class="chart-wrap"><canvas id="en-wau"></canvas></div></div>
+   </div>
+   <div class="grid g2">
+     <div class="card"><h3>New threads per active user / day</h3><p class="desc">New conversations started ÷ DAU that day</p><div class="chart-wrap"><canvas id="en-ntr"></canvas></div></div>
+     <div class="card"><h3>M1 monthly cohort retention</h3><p class="desc">Of users first seen in a month, % active again the next month</p>
+       <div class="scroll" style="max-height:300px"><table><thead><tr><th>Cohort month</th><th class="num">Users</th><th class="num">Retained M+1</th><th class="num">M1 %</th></tr></thead><tbody>
+       ${E.m1.by_cohort.map(c=>`<tr><td>${esc(c.cohort)}</td><td class="num">${c.size}</td><td class="num">${c.m1_retained==null?'—':c.m1_retained}</td><td class="num">${c.m1_pct==null?'<span style="color:var(--muted2)">pending</span>':c.m1_pct+'%'}</td></tr>`).join('')}
+       </tbody></table></div></div>
+   </div>`);
+  bar('en-slot',E.day_slots.map(s=>s.slot),E.day_slots.map(s=>s.count),{colors:E.day_slots.map((_,i)=>PAL[i%PAL.length])});
+  lineChart('en-stick',E.stickiness.map(x=>dmonth(x.date)),[{label:'DAU/WAU %',data:E.stickiness.map(x=>x.stickiness),color:PAL[1],fill:true}],{fmtv:v=>v+'%'});
+  chart('en-dau',{type:'bar',data:{labels:E.dau_split.map(d=>dmonth(d.date)),datasets:[
+     {label:'Returning',data:E.dau_split.map(d=>d.existing),backgroundColor:PAL[0],stack:'s'},
+     {label:'New',data:E.dau_split.map(d=>d.new),backgroundColor:PAL[3],stack:'s'}]},
+   options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{position:'top'}},scales:{x:{stacked:true,grid:GRID},y:{stacked:true,beginAtZero:true,grid:GRID}}}});
+  chart('en-wau',{type:'bar',data:{labels:E.wau_split.map(d=>d.label),datasets:[
+     {label:'Returning',data:E.wau_split.map(d=>d.existing),backgroundColor:PAL[0],stack:'s'},
+     {label:'New',data:E.wau_split.map(d=>d.new),backgroundColor:PAL[3],stack:'s'}]},
+   options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{position:'top'}},scales:{x:{stacked:true,grid:GRID},y:{stacked:true,beginAtZero:true,grid:GRID}}}});
+  bar('en-ntr',E.new_thread_rate.map(x=>dmonth(x.date)),E.new_thread_rate.map(x=>x.rate),{color:PAL[5],fmtv:v=>(+v).toFixed(2)});
+};
+
+RENDER.users=()=>{
+  const u=D.users;
+  H('users',`
+   <div class="grid g2" style="margin-bottom:16px">
+     <div class="card"><h3>Turns per user</h3><p class="desc">Most engaged users (by profile name)</p><div class="chart-wrap"><canvas id="us-turns"></canvas></div></div>
+     <div class="card"><h3>Tokens per user</h3><p class="desc">Compute footprint per user</p><div class="chart-wrap"><canvas id="us-tok"></canvas></div></div>
+   </div>
+   <div class="card"><h3>Per-user breakdown</h3><p class="desc">Click a column header to sort · ${u.length} users · persona from trader_persona_june.csv (unmatched = Unclassified)</p>
+     <div class="scroll"><table id="us-table"><thead><tr>
+       <th data-k="name" data-t="s">User</th><th data-k="user_id" data-t="s">User ID</th><th data-k="email" data-t="s">Email</th>
+       <th data-k="persona" data-t="s">Persona</th>
+       <th class="num" data-k="turns">Turns</th><th class="num" data-k="threads">Convos</th>
+       <th class="num" data-k="active_days">Active days</th>
+       <th class="num" data-k="tokens">Tokens</th><th class="num" data-k="tool_calls">Tools</th>
+       <th class="num" data-k="errors">Errs</th><th class="num" data-k="cancelled">Canc</th>
+       <th class="num" data-k="avg_latency_ms">Avg time</th><th class="num" data-k="p90_latency_ms">p90 time</th>
+       <th data-k="top_intent" data-t="s">Top intent</th>
+     </tr></thead><tbody></tbody></table></div></div>`);
+  const top=u.slice(0,14);
+  bar('us-turns',top.map(x=>x.name),top.map(x=>x.turns),{horizontal:true,color:PAL[0]});
+  const tt=[...u].sort((a,b)=>b.tokens-a.tokens).slice(0,14);
+  bar('us-tok',tt.map(x=>x.name),tt.map(x=>x.tokens),{horizontal:true,color:PAL[2],fmtv:fmtTok});
+  const tb=$('#us-table tbody'); let sortK='turns',sortDir=-1;
+  const draw=()=>{
+    const rows=[...u].sort((a,b)=> (typeof a[sortK]==='string'? a[sortK].localeCompare(b[sortK]): a[sortK]-b[sortK])*sortDir);
+    tb.innerHTML=rows.map(r=>`<tr>
+      <td>${esc(r.name)}</td><td class="uid">${esc(r.user_id)}</td><td style="color:var(--muted)">${esc(r.email)}</td>
+      <td><span class="tag"${r.persona==='unclassified'?' style="opacity:.6"':''}>${esc(personaLabel(r.persona))}</span></td>
+      <td class="num">${fmt(r.turns)}</td><td class="num">${fmt(r.threads)}</td>
+      <td class="num">${r.active_days}<span style="color:var(--muted2)"> / ${m.n_days}</span></td>
+      <td class="num">${fmtTok(r.tokens)}</td><td class="num">${fmt(r.tool_calls)}</td>
+      <td class="num">${r.errors?'<span style="color:var(--bad)">'+r.errors+'</span>':0}</td>
+      <td class="num">${r.cancelled||0}</td>
+      <td class="num">${fmtMs(r.avg_latency_ms)}</td><td class="num">${fmtMs(r.p90_latency_ms)}</td>
+      <td><span class="tag">${esc(r.top_intent)}</span></td></tr>`).join('');
+  };
+  draw();
+  $('#us-table thead').querySelectorAll('th').forEach(th=>th.onclick=()=>{
+    const k=th.dataset.k; if(k===sortK)sortDir*=-1; else{sortK=k;sortDir=th.dataset.t==='s'?1:-1;} draw();
+  });
+};
+
+RENDER.personas=()=>{
+  const P=D.personas;
+  if(!P||!P.table.length){ H('personas','<div class="empty">No turns match the current filters.</div>'); return; }
+  const t=P.table;
+  const classPct=P.total_users?Math.round(P.classified_users/P.total_users*100):0;
+  const un=t.find(x=>x.persona==='unclassified');
+  const totTurns=t.reduce((a,x)=>a+x.turns,0)||1;
+  const topP=t[0];
+  H('personas',`
+   <div class="note">Primary trading persona per user from <code>trader_persona_june.csv</code> (their dominant trade mix in June). Users not in the CSV are <b>Unclassified</b>. All numbers respect the global date/persona filters — use the <b>Persona</b> filter in the top bar to slice the whole dashboard to one persona.</div>
+   <div class="grid g4" style="margin-bottom:16px">
+     ${kpi('Personas active',t.length,'with ≥1 turn in range')}
+     ${kpi('Classified users',classPct+'%',`${fmt(P.classified_users)} of ${fmt(P.total_users)} users`,'cy')}
+     ${kpi('Top persona',personaLabel(topP.persona),`${fmt(topP.turns)} turns · ${fmt(topP.users)} users`,'pp')}
+     ${kpi('Unclassified share',un?((un.turns/totTurns*100).toFixed(1)+'%'):'0%','of turns in range',un&&un.turns/totTurns>0.4?'warn':'pk')}
+   </div>
+   <div class="grid g2" style="margin-bottom:16px">
+     <div class="card"><h3>Users by persona</h3><p class="desc">Distinct users active in the selected range</p><div class="chart-wrap"><canvas id="pe-users"></canvas></div></div>
+     <div class="card"><h3>Turns by persona</h3><p class="desc">Total turns per persona</p><div class="chart-wrap"><canvas id="pe-turns"></canvas></div></div>
+   </div>
+   <div class="grid g2" style="margin-bottom:16px">
+     <div class="card"><h3>Engagement depth by persona</h3><p class="desc">Avg turns per user — which personas lean on Kyro hardest</p><div class="chart-wrap"><canvas id="pe-depth"></canvas></div></div>
+     <div class="card"><h3>Quality flag rate by persona</h3><p class="desc">Tier-A flagged turns per 100 turns — who hits the worst experience</p><div class="chart-wrap"><canvas id="pe-flags"></canvas></div></div>
+   </div>
+   <div class="card" style="margin-bottom:16px"><h3>What each persona asks for</h3><p class="desc">Query-intent mix per persona (share of that persona's turns)</p><div class="chart-wrap tall"><canvas id="pe-intent"></canvas></div></div>
+   <div class="card"><h3>Persona breakdown</h3><p class="desc">Click a column header to sort</p>
+     <div class="scroll"><table id="pe-table"><thead><tr>
+       <th data-k="persona" data-t="s">Persona</th>
+       <th class="num" data-k="users">Users</th><th class="num" data-k="turns">Turns</th>
+       <th class="num" data-k="threads">Convos</th><th class="num" data-k="turns_per_user">Turns/user</th>
+       <th class="num" data-k="active_days">Active days</th>
+       <th class="num" data-k="tokens">Tokens</th><th class="num" data-k="tokens_per_user">Tok/user</th>
+       <th class="num" data-k="tool_calls">Tools</th><th class="num" data-k="errors">Errs</th>
+       <th class="num" data-k="cancelled">Canc</th><th class="num" data-k="negative">Neg. queries</th>
+       <th class="num" data-k="flagged">Flagged</th><th class="num" data-k="flag_per100">Flags/100</th>
+       <th class="num" data-k="avg_latency_ms">Avg time</th><th class="num" data-k="p90_latency_ms">p90 time</th>
+       <th data-k="top_intent" data-t="s">Top intent</th>
+     </tr></thead><tbody></tbody></table></div></div>`);
+  const labs=t.map(x=>personaLabel(x.persona));
+  doughnut('pe-users',labs,t.map(x=>x.users));
+  bar('pe-turns',labs,t.map(x=>x.turns),{horizontal:true,colors:t.map((_,i)=>PAL[i%PAL.length])});
+  bar('pe-depth',labs,t.map(x=>x.turns_per_user),{horizontal:true,color:PAL[1],fmtv:v=>(+v).toFixed(1)});
+  bar('pe-flags',labs,t.map(x=>x.flag_per100),{horizontal:true,color:PAL[9],fmtv:v=>v+'/100'});
+  // intent mix — stacked % bars, top 8 named intents overall. The real "Other"
+  // intent (classifier fallback) is folded into the synthetic long-tail bucket so
+  // the two never collide as duplicate legend entries.
+  const intentTot=new Map();
+  t.forEach(x=>x.intents.forEach(i=>intentTot.set(i.intent,(intentTot.get(i.intent)||0)+i.count)));
+  const topIntents=[...intentTot.entries()].filter(([k])=>k!=='Other').sort((a,b)=>b[1]-a[1]).slice(0,8).map(([k])=>k);
+  const ds=topIntents.map((intent,i)=>({label:intent,backgroundColor:PAL[i%PAL.length],stack:'s',
+    data:t.map(x=>{const c=(x.intents.find(z=>z.intent===intent)||{}).count||0;return x.turns?+(c/x.turns*100).toFixed(1):0;})}));
+  ds.push({label:'Other / long tail',backgroundColor:'#4b5878',stack:'s',
+    data:t.map(x=>{const c=x.intents.filter(z=>!topIntents.includes(z.intent)).reduce((a,z)=>a+z.count,0);return x.turns?+(c/x.turns*100).toFixed(1):0;})});
+  chart('pe-intent',{type:'bar',data:{labels:labs,datasets:ds},
+    options:{indexAxis:'y',responsive:true,maintainAspectRatio:false,
+      plugins:{legend:{position:'top'},tooltip:{callbacks:{label:c=>` ${c.dataset.label}: ${c.parsed.x}%`}}},
+      scales:{x:{stacked:true,grid:GRID,max:100,ticks:{callback:v=>v+'%'}},y:{stacked:true,grid:{display:false}}}}});
+  // sortable table
+  const tb=$('#pe-table tbody'); let sK='turns',sD=-1;
+  const draw=()=>{
+    const rows=[...t].sort((a,b)=>(typeof a[sK]==='string'?a[sK].localeCompare(b[sK]):a[sK]-b[sK])*sD);
+    tb.innerHTML=rows.map(r=>`<tr>
+      <td><span class="tag"${r.persona==='unclassified'?' style="opacity:.6"':''}>${esc(personaLabel(r.persona))}</span></td>
+      <td class="num">${fmt(r.users)}</td><td class="num">${fmt(r.turns)}</td>
+      <td class="num">${fmt(r.threads)}</td><td class="num">${r.turns_per_user}</td>
+      <td class="num">${r.active_days}<span style="color:var(--muted2)"> / ${m.n_days}</span></td>
+      <td class="num">${fmtTok(r.tokens)}</td><td class="num">${fmtTok(r.tokens_per_user)}</td>
+      <td class="num">${fmt(r.tool_calls)}</td>
+      <td class="num">${r.errors?'<span style="color:var(--bad)">'+r.errors+'</span>':0}</td>
+      <td class="num">${r.cancelled||0}</td><td class="num">${r.negative||0}</td>
+      <td class="num">${r.flagged?'<span style="color:var(--bad)">'+r.flagged+'</span>':0}</td>
+      <td class="num">${r.flag_per100}</td>
+      <td class="num">${fmtMs(r.avg_latency_ms)}</td><td class="num">${fmtMs(r.p90_latency_ms)}</td>
+      <td><span class="tag">${esc(r.top_intent)}</span></td></tr>`).join('');
+  };
+  draw();
+  $('#pe-table thead').querySelectorAll('th').forEach(th=>th.onclick=()=>{
+    const k=th.dataset.k; if(k===sK)sD*=-1; else{sK=k;sD=th.dataset.t==='s'?1:-1;} draw();
+  });
+};
+
+RENDER.queries=()=>{
+  const q=D.queries, tv=q.typed_vs_screen;
+  H('queries',`
+   <div class="grid g3" style="margin-bottom:16px">
+     ${kpi('Typed queries',fmt(tv.typed),'free-text questions')}
+     ${kpi('“Analyse this screen”',fmt(tv.screen_context),'context-button taps','cy')}
+     ${kpi('Distinct intents',D.queries.intents.length,'categories detected','pp')}
+   </div>
+   <div class="grid g2" style="margin-bottom:16px">
+     <div class="card span1"><h3>Query word cloud</h3><p class="desc">Most frequent terms across typed queries (stop-words removed)</p>
+       <canvas id="wc" class="wc"></canvas></div>
+     <div class="card span1"><h3>Query intent distribution</h3><p class="desc">Heuristic classification from text + tools used</p><div class="chart-wrap tall"><canvas id="q-intent"></canvas></div></div>
+   </div>
+   <div class="grid g2" style="margin-bottom:16px">
+     <div class="card"><h3>Query length</h3><p class="desc">Word count of typed queries</p><div class="chart-wrap short"><canvas id="q-len"></canvas></div></div>
+     <div class="card"><h3>Top repeated queries</h3><p class="desc">Normalised exact matches</p>
+       <div class="scroll" style="max-height:280px"><table><thead><tr><th>Query</th><th class="num">×</th></tr></thead><tbody>
+       ${q.top.length?q.top.map(t=>`<tr><td class="qtext">${esc(t.text)}</td><td class="num">${t.count}</td></tr>`).join(''):'<tr><td class="empty" colspan=2>No repeats — every query unique</td></tr>'}
+       </tbody></table></div></div>
+   </div>
+   <div class="note" style="margin-top:0">🔎 <b>“Negativity / disliked queries”</b>: with no like/dislike field in the data, this is a best-effort <b>frustration & negative-sentiment</b> detector — a lexicon (English + Hinglish: <i>wrong, useless, galat, bekar…</i>) plus cancelled/errored turns. With only ${fmt(D.kpis.turns)} turns the signal is sparse; treat as indicative, not exhaustive.</div>
+   <div class="card" style="margin-bottom:16px"><h3>Negative-sentiment / frustration queries (${q.negative.length})</h3>
+     <div class="scroll" style="max-height:260px"><table><thead><tr><th>When (IST)</th><th>User</th><th>User ID</th><th>Signal</th><th>Query</th><th>Outcome</th></tr></thead><tbody>
+     ${q.negative.length?q.negative.map(n=>`<tr><td>${fmtDate(n.ts_ms)}</td><td>${esc(n.user)}</td><td class="uid">${esc(n.user_id||'')}</td><td><span class="tag" style="color:var(--bad)">${esc(n.reason)}</span></td><td class="qtext">${esc(n.text)}</td><td><span class="pill ${n.outcome}">${n.outcome}</span></td></tr>`).join(''):'<tr><td class="empty" colspan=6>No negative-sentiment queries detected — users were largely neutral/positive.</td></tr>'}
+     </tbody></table></div></div>
+   <div class="card"><h3>All queries (${q.all.length})</h3><p class="desc">Searchable log of every turn's opening query</p>
+     <input class="filterbox" id="qfilter" placeholder="Filter queries, users, intents…">
+     <div class="scroll"><table id="qall"><thead><tr><th style="width:22px"></th><th>When (IST)</th><th>User</th><th>User ID</th><th>Thread ID</th><th>Intent</th><th>Query</th><th class="num">Tools</th><th>Outcome</th></tr></thead><tbody></tbody></table></div></div>`);
+  doughnut('q-intent',q.intents.map(i=>i.intent),q.intents.map(i=>i.count));
+  bar('q-len',q.length_hist.map(x=>x.label),q.length_hist.map(x=>x.count),{color:PAL[4]});
+  // word cloud
+  if(typeof WordCloud!=='undefined' && q.wordcloud.length){
+    const cv=$('#wc'); const w=cv.parentElement.clientWidth-4; cv.width=w; cv.height=380;
+    const max=Math.max(...q.wordcloud.map(x=>x[1]));
+    WordCloud(cv,{list:q.wordcloud,gridSize:7,weightFactor:n=>8+Math.sqrt(n/max)*52,
+      fontFamily:'-apple-system,Segoe UI,sans-serif',color:(w,wt)=>PAL[Math.floor(Math.random()*PAL.length)],
+      backgroundColor:'transparent',rotateRatio:.35,rotationSteps:2,minSize:9,shrinkToFit:true,drawOutOfBound:false});
+  } else { $('#wc').outerHTML='<div class="empty">word cloud unavailable</div>'; }
+  // all queries table — filterable, each row expands to its reasoning/tool/response transcript
+  // (tItem / transcriptHtml are shared globals — see top of script)
+  const tb=$('#qall tbody');
+  const all=[...q.all].sort((a,b)=>b.ts_ms-a.ts_ms);
+  const rowsHtml=(r,i)=>`<tr class="qrow" data-i="${i}"><td><span class="caret">▸</span></td><td>${fmtDate(r.ts_ms)}</td><td>${esc(r.user)}</td><td class="uid">${esc(r.user_id||'')}</td><td class="uid">${esc(r.thread||'')}</td><td><span class="tag">${esc(r.intent)}</span></td><td class="qtext">${esc(r.text)}</td><td class="num">${r.n_tools}</td><td><span class="pill ${r.outcome}">${r.outcome}</span></td></tr>`+
+    `<tr class="qdetail" style="display:none"><td colspan="9"></td></tr>`;
+  const drawQ=f=>{ const ff=f.toLowerCase();
+    const rows=all.map((r,i)=>[r,i]).filter(([r])=>!ff||(r.text+r.user+(r.user_id||'')+(r.thread||'')+r.intent).toLowerCase().includes(ff));
+    tb.innerHTML=rows.length?rows.map(([r,i])=>rowsHtml(r,i)).join(''):'<tr><td class="empty" colspan=9>no match</td></tr>'; };
+  drawQ(''); $('#qfilter').oninput=e=>drawQ(e.target.value);
+  tb.onclick=e=>{
+    const row=e.target.closest('.qrow'); if(!row) return;
+    const det=row.nextElementSibling; if(!det||!det.classList.contains('qdetail')) return;
+    let st=((+row.dataset.st)||0)+1; if(st>2) st=0;
+    row.dataset.st=st; row.classList.toggle('open', st>0);
+    if(st===0){ det.style.display='none'; det.firstElementChild.innerHTML=''; }
+    else { det.style.display=''; det.firstElementChild.innerHTML=transcriptHtml(all[+row.dataset.i], st); }
+  };
+};
+
+RENDER.conversations=()=>{
+  const c=D.conversations, f=c.followups;
+  H('conversations',`
+   <div class="grid g4" style="margin-bottom:16px">
+     ${kpi('Avg depth',c.avg_turns_per_thread,'turns / conversation')}
+     ${kpi('Deepest convo',c.max_depth,'turns in one thread','cy')}
+     ${kpi('Single-turn',fmt(c.single_turn_threads),'one-and-done conversations','pp')}
+     ${kpi('Follow-ups offered',fmt(f.total_offered),`on ${f.pct_turns}% of turns`,'pk')}
+   </div>
+   <div class="grid g2" style="margin-bottom:16px">
+     <div class="card"><h3>Conversation depth</h3><p class="desc">Distribution of turns per conversation</p><div class="chart-wrap"><canvas id="cv-depth"></canvas></div></div>
+     <div class="card"><h3>Follow-up suggestions by type</h3><p class="desc">Kyro-suggested next actions. <b>deeplink</b> = jump to a screen, <b>ai_chat</b> = a pre-filled query.</p><div class="chart-wrap"><canvas id="cv-futype"></canvas></div></div>
+   </div>
+   <div class="card"><h3>Top follow-up suggestions</h3><p class="desc">Most frequently surfaced next-step chips (offered, not necessarily tapped — taps aren't in this data)</p>
+     <div class="scroll" style="max-height:340px"><table><thead><tr><th>Suggestion label</th><th class="num">Times offered</th></tr></thead><tbody>
+     ${f.top_labels.map(l=>`<tr><td>${esc(l.label)}</td><td class="num">${l.count}</td></tr>`).join('')}
+     </tbody></table></div></div>
+   <div class="card" style="margin-top:16px"><h3>All conversations (${c.threads_table.length})</h3>
+     <p class="desc">Every thread with its user and a few sample queries · click a column header to sort</p>
+     <input class="filterbox" id="cvfilter" placeholder="Filter by name, user id, thread id, query…">
+     <div class="scroll"><table id="cv-threads"><thead><tr>
+       <th style="width:22px"></th>
+       <th class="num" data-k="start_ms">When (IST)</th>
+       <th data-k="name" data-t="s">Name</th>
+       <th data-k="user_id" data-t="s">User ID</th>
+       <th data-k="thread_id" data-t="s">Thread ID</th>
+       <th class="num" data-k="turns">Turns</th>
+       <th>Sample queries</th>
+     </tr></thead><tbody></tbody></table></div></div>`);
+  bar('cv-depth',c.depth_hist.map(d=>d.turns+'t'),c.depth_hist.map(d=>d.count),{color:PAL[0],label:'conversations'});
+  doughnut('cv-futype',f.by_type.map(t=>t.type),f.by_type.map(t=>t.count),{colors:[PAL[1],PAL[3]]});
+  // all-conversations directory — sortable + filterable; rows expand to the user<->assistant exchange
+  const tt=$('#cv-threads tbody'); let tsK='turns',tsD=-1,cur=[];
+  const exchangeHtml=r=>{ const ex=r.exchange||[];
+    if(!ex.length) return '<div class="empty-tr">No user/assistant text recorded for this conversation.</div>';
+    return `<div class="transcript">`+ex.map(mm=> mm.r==='u'
+      ? `<div class="ti" style="border-color:var(--p4)"><span class="lbl" style="color:var(--p4)">🧑 user</span><div class="body">${esc(mm.t)}</div></div>`
+      : `<div class="ti resp"><span class="lbl">💬 assistant</span><div class="body">${esc(mm.t)}</div></div>`
+    ).join('')+`</div>`; };
+  const samp=r=>r.samples.length?r.samples.map(s=>'• '+esc(s)).join('<br>'):'<span style="color:var(--muted2)">—</span>';
+  const rowH=(r,i)=>`<tr class="qrow" data-i="${i}"><td><span class="caret">▸</span></td>
+    <td>${fmtDate(r.start_ms)}</td>
+    <td>${esc(r.name)||'<span style="color:var(--muted2)">—</span>'}</td>
+    <td class="uid">${esc(r.user_id)}</td>
+    <td class="uid">${esc(r.thread_id)}</td>
+    <td class="num">${r.turns}</td>
+    <td class="qtext">${samp(r)}</td></tr>
+    <tr class="qdetail" style="display:none"><td colspan="7"></td></tr>`;
+  const drawT=f2=>{ const ff=(f2||'').toLowerCase();
+    cur=[...c.threads_table]
+      .filter(r=>!ff||((r.name||'')+r.user_id+r.thread_id+r.samples.join(' ')).toLowerCase().includes(ff))
+      .sort((a,b)=>(typeof a[tsK]==='string'?(a[tsK]||'').localeCompare(b[tsK]||''):((a[tsK]||0)-(b[tsK]||0)))*tsD);
+    tt.innerHTML=cur.length?cur.map((r,i)=>rowH(r,i)).join(''):'<tr><td class="empty" colspan=7>no match</td></tr>'; };
+  drawT('');
+  $('#cvfilter').oninput=e=>drawT(e.target.value);
+  $('#cv-threads thead').querySelectorAll('th').forEach(th=>{ if(!th.dataset.k)return;
+    th.onclick=()=>{const k=th.dataset.k; if(k===tsK)tsD*=-1; else{tsK=k;tsD=th.dataset.t==='s'?1:-1;} drawT($('#cvfilter').value);};});
+  tt.onclick=e=>{ const row=e.target.closest('.qrow'); if(!row)return;
+    const det=row.nextElementSibling; if(!det||!det.classList.contains('qdetail'))return;
+    const open=row.classList.toggle('open');
+    if(!open){ det.style.display='none'; det.firstElementChild.innerHTML=''; }
+    else{ det.style.display=''; det.firstElementChild.innerHTML=exchangeHtml(cur[+row.dataset.i]); } };
+};
+
+RENDER.interactions=()=>{
+  const it=D.interactions;
+  H('interactions',`
+   <div class="note">These are <b>client-side UI events</b> Kyro dispatched to the app — widgets rendered, clarifying prompts, screen navigation and chart edits. They represent what the user was <i>shown / asked</i>; explicit tap-through isn't recorded in this archive.</div>
+   <div class="grid g4" style="margin-bottom:16px">
+     ${kpi('UI interactions',fmt(D.kpis.client_interactions),'total dispatched')}
+     ${kpi('Widgets surfaced',fmt(it.widgets.reduce((a,b)=>a+b.count,0)),`${it.widgets.length} widget types`,'cy')}
+     ${kpi('Clarifying prompts',fmt(it.ask_user_total),'ask_user calls','pp')}
+     ${kpi('Chart edits',fmt(it.chart_actions),'indicators / drawings','pk')}
+   </div>
+   <div class="grid g2" style="margin-bottom:16px">
+     <div class="card"><h3>Top pages where Kyro is used</h3><p class="desc">Screen the user was on when Kyro read context via <code>get_screen_context</code> — captured on ${it.pages_coverage}/${D.kpis.turns} turns (Kyro only reads the screen when the request is screen-dependent).</p>
+       ${it.pages.length?`<div class="chart-wrap"><canvas id="in-pages"></canvas></div>`:'<div class="empty">No screen context captured in this dataset.</div>'}</div>
+     <div class="card"><h3>Page detail</h3><p class="desc">What each screen is</p>
+       <div class="scroll" style="max-height:300px"><table><thead><tr><th>Page</th><th>What it is</th><th class="num">Turns</th></tr></thead><tbody>
+       ${it.pages.length?it.pages.map(p=>`<tr><td><b>${esc(p.id)}</b>${p.sub_tabs&&p.sub_tabs.length?'<span style="color:var(--muted2)"> › '+esc(p.sub_tabs[0].tab)+'</span>':''}</td><td style="color:var(--muted)">${esc(p.desc)}</td><td class="num">${p.count}</td></tr>`).join(''):'<tr><td class="empty" colspan=3>—</td></tr>'}
+       </tbody></table></div></div>
+   </div>
+   <div class="grid g2" style="margin-bottom:16px">
+     <div class="card"><h3>Interactions by type</h3><p class="desc">Which UI surfaces Kyro drives</p><div class="chart-wrap"><canvas id="in-tool"></canvas></div></div>
+     <div class="card"><h3>Widgets surfaced</h3><p class="desc">In-chat cards rendered to users</p><div class="chart-wrap"><canvas id="in-wid"></canvas></div></div>
+   </div>
+   <div class="grid g2">
+     <div class="card"><h3>Top widget titles</h3><div class="scroll" style="max-height:300px"><table><thead><tr><th>Widget title</th><th class="num">×</th></tr></thead><tbody>
+       ${it.widget_titles.length?it.widget_titles.map(w=>`<tr><td>${esc(w.title)}</td><td class="num">${w.count}</td></tr>`).join(''):'<tr><td class="empty" colspan=2>—</td></tr>'}</tbody></table></div></div>
+     <div class="card"><h3>Clarifying questions Kyro asked</h3><p class="desc">Top <code>ask_user</code> prompts</p><div class="scroll" style="max-height:256px"><table><thead><tr><th>Question</th><th class="num">×</th></tr></thead><tbody>
+       ${it.top_questions.length?it.top_questions.map(w=>`<tr><td class="qtext">${esc(w.q)}</td><td class="num">${w.count}</td></tr>`).join(''):'<tr><td class="empty" colspan=2>—</td></tr>'}</tbody></table></div></div>
+   </div>
+   ${it.open_pages.length?`<div class="card" style="margin-top:16px"><h3>Screen navigation (open_page targets)</h3><div class="chart-wrap short"><canvas id="in-page"></canvas></div></div>`:''}`);
+  if(it.pages.length) bar('in-pages',it.pages.map(p=>p.id),it.pages.map(p=>p.count),{horizontal:true,colors:it.pages.map((_,i)=>PAL[i%PAL.length])});
+  bar('in-tool',it.by_tool.map(t=>t.tool),it.by_tool.map(t=>t.count),{horizontal:true,colors:it.by_tool.map((_,i)=>PAL[i%PAL.length])});
+  doughnut('in-wid',it.widgets.map(w=>w.type),it.widgets.map(w=>w.count));
+  if(it.open_pages.length) bar('in-page',it.open_pages.map(p=>p.type),it.open_pages.map(p=>p.count),{color:PAL[6]});
+};
+
+RENDER.tools=()=>{
+  const t=D.tools;
+  const byLat=[...t.table].filter(x=>x.lat_p90>0).sort((a,b)=>b.lat_p90-a.lat_p90).slice(0,12);
+  const byOut=[...t.table].filter(x=>x.out_avg>0).sort((a,b)=>b.out_avg-a.out_avg).slice(0,12);
+  const skl=t.skills_available, skHalf=Math.ceil(skl.length/2);
+  let skillRows='';
+  for(let i=0;i<skHalf;i++){const a=skl[i],b=skl[i+skHalf];
+    skillRows+=`<tr><td class="num" style="color:var(--muted2)">${i+1}</td><td>${esc(a)}</td>`+(b?`<td class="num" style="color:var(--muted2)">${i+1+skHalf}</td><td>${esc(b)}</td>`:'<td></td><td></td>')+'</tr>';}
+  H('tools',`
+   <div class="grid g4" style="margin-bottom:16px">
+     ${kpi('Tool calls',fmt(D.kpis.total_tool_calls),`${t.total_unique_tools} unique tools`)}
+     ${kpi('Avg tools / turn',t.per_turn_stats.mean,`max ${t.per_turn_stats.max} in a turn`,'cy')}
+     ${kpi('Server-tool errors',fmt(t.table.reduce((a,b)=>a+b.errors,0)),'across all tools','pp')}
+     ${kpi('Largest tool output',t.table.length?fmtSize(t.table.reduce((a,x)=>Math.max(a,x.out_max),0)):'—','single payload','pk')}
+   </div>
+   <div class="grid g2" style="margin-bottom:16px">
+     <div class="card"><h3>Most invoked tools</h3><p class="desc">Includes data tools + UI tools (ask_user, show_widget)</p><div class="chart-wrap tall"><canvas id="t-inv"></canvas></div></div>
+     <div class="card"><h3>Tools per turn</h3><p class="desc">How many tool calls a single turn fires</p><div class="chart-wrap tall"><canvas id="t-ptt"></canvas></div></div>
+   </div>
+   <div class="grid g2" style="margin-bottom:16px">
+     <div class="card"><h3>Slowest tools (p90 latency)</h3><p class="desc">⚠️ <code>ask_user</code> is high because it waits for the human to reply</p><div class="chart-wrap"><canvas id="t-lat"></canvas></div></div>
+     <div class="card"><h3>Heaviest tool outputs (avg size)</h3><p class="desc">Avg serialized result payload per tool</p><div class="chart-wrap"><canvas id="t-out"></canvas></div></div>
+   </div>
+   <div class="card" style="margin-bottom:16px"><h3>Tool performance & I/O detail</h3><p class="desc">Latency from <code>tool_end</code>, sizes are serialized JSON of inputs/outputs · click headers to sort</p>
+     <div class="scroll"><table id="t-table"><thead><tr>
+       <th data-k="name" data-t="s">Tool</th><th class="num" data-k="calls">Calls</th>
+       <th class="num" data-k="error_rate">Err %</th><th class="num" data-k="lat_p50">p50</th>
+       <th class="num" data-k="lat_p90">p90</th><th class="num" data-k="lat_max">max</th>
+       <th class="num" data-k="in_avg">In avg</th><th class="num" data-k="out_avg">Out avg</th>
+       <th class="num" data-k="out_max">Out max</th><th class="num" data-k="out_total">Out total</th>
+     </tr></thead><tbody></tbody></table></div></div>
+   <div class="card"><h3>Skills available to the agent</h3><p class="desc">${t.skills_constant?'All ':''}${skl.length} skill bundles are loaded into Kyro's context ${t.skills_constant?'on every turn':'(set varies by turn)'} — always available, not invoked on demand.</p>
+     <table><thead><tr><th class="num">#</th><th>Skill</th><th class="num">#</th><th>Skill</th></tr></thead><tbody>${skillRows}</tbody></table></div>`);
+  bar('t-inv',t.invoked.slice(0,16).map(x=>x.name),t.invoked.slice(0,16).map(x=>x.count),{horizontal:true,colors:t.invoked.slice(0,16).map((_,i)=>PAL[i%PAL.length])});
+  bar('t-ptt',t.per_turn_hist.map(x=>x.label),t.per_turn_hist.map(x=>x.count),{color:PAL[2]});
+  bar('t-lat',byLat.map(x=>x.name),byLat.map(x=>x.lat_p90),{horizontal:true,color:PAL[5],fmtv:fmtMs});
+  bar('t-out',byOut.map(x=>x.name),byOut.map(x=>x.out_avg),{horizontal:true,color:PAL[1],fmtv:fmtSize});
+  const tb=$('#t-table tbody'); let sk='calls',sd=-1;
+  const draw=()=>{ const rows=[...t.table].sort((a,b)=>(typeof a[sk]==='string'?a[sk].localeCompare(b[sk]):a[sk]-b[sk])*sd);
+    tb.innerHTML=rows.map(r=>`<tr><td>${esc(r.name)}</td><td class="num">${r.calls}</td>
+      <td class="num">${r.error_rate?'<span style="color:var(--bad)">'+r.error_rate+'%</span>':'0%'}</td>
+      <td class="num">${fmtMs(r.lat_p50)}</td><td class="num">${fmtMs(r.lat_p90)}</td><td class="num">${fmtMs(r.lat_max)}</td>
+      <td class="num">${fmtSize(r.in_avg)}</td><td class="num">${fmtSize(r.out_avg)}</td><td class="num">${fmtSize(r.out_max)}</td><td class="num">${fmtSize(r.out_total)}</td></tr>`).join(''); };
+  draw();
+  $('#t-table thead').querySelectorAll('th').forEach(th=>th.onclick=()=>{const k=th.dataset.k;if(k===sk)sd*=-1;else{sk=k;sd=th.dataset.t==='s'?1:-1;}draw();});
+};
+
+RENDER.performance=()=>{
+  const p=D.performance, s=p.latency_stats;
+  H('performance',`
+   <div class="note">“Turn time” = wall-clock from turn start to finish. It includes model thinking, tool execution <i>and</i> any time spent waiting on the user for an <code>ask_user</code> reply — so long tails are often human wait, not model slowness.</div>
+   <div class="grid g4" style="margin-bottom:16px">
+     ${kpi('Median (p50)',fmtMs(s.p50),'typical turn')}
+     ${kpi('p90',fmtMs(s.p90),'9 in 10 faster than','cy')}
+     ${kpi('p99',fmtMs(s.p99),'tail latency','pp')}
+     ${kpi('Max',fmtMs(s.max),'slowest turn','pk')}
+   </div>
+   ${p.latency_no_ask_stats?`<div class="note">Excluding the <b>${p.ask_user_turns}</b> turns that used <code>ask_user</code> (which include human reply time), the remaining <b>${p.no_ask_turns}</b> turns — pure model + tool time — run materially faster:</div>
+   <div class="grid g4" style="margin-bottom:16px">
+     ${kpi('p50 · excl. ask_user',fmtMs(p.latency_no_ask_stats.p50),'model + tools only')}
+     ${kpi('p90 · excl. ask_user',fmtMs(p.latency_no_ask_stats.p90),'9 in 10 faster than','cy')}
+     ${kpi('p99 · excl. ask_user',fmtMs(p.latency_no_ask_stats.p99),'tail','pp')}
+     ${kpi('Max · excl. ask_user',fmtMs(p.latency_no_ask_stats.max),'slowest non-ask turn','pk')}
+   </div>`:''}
+   <div class="grid g2" style="margin-bottom:16px">
+     <div class="card"><h3>Turn duration distribution</h3><p class="desc">Bucketed wall-clock time per turn</p><div class="chart-wrap"><canvas id="pf-hist"></canvas></div></div>
+     <div class="card"><h3>Turn time over the period</h3><p class="desc">Each point is one turn (IST)</p><div class="chart-wrap"><canvas id="pf-ts"></canvas></div></div>
+   </div>
+   <div class="grid g2">
+     <div class="card"><h3>Turn time vs tokens</h3><p class="desc">Does more context mean slower turns?</p><div class="chart-wrap"><canvas id="pf-scatter"></canvas></div></div>
+     <div class="card"><h3>Reasoning</h3><p class="desc">Extended-thinking footprint</p>
+       <div class="inline-stats" style="margin-top:18px">
+         <div><div class="n">${p.reasoning_turns}</div><div class="l">turns with reasoning steps</div></div>
+         <div><div class="n">${p.avg_reasoning_steps}</div><div class="l">avg reasoning steps / turn</div></div>
+         <div><div class="n">${fmtTok(D.tokens.totals.reasoning)}</div><div class="l">total reasoning tokens</div></div>
+         <div><div class="n">${fmtMs(s.mean)}</div><div class="l">mean turn time</div></div>
+       </div>
+       <div class="chart-wrap short" style="margin-top:10px"><canvas id="pf-reason"></canvas></div>
+     </div>
+   </div>`);
+  bar('pf-hist',p.latency_hist.map(x=>x.label),p.latency_hist.map(x=>x.count),{color:PAL[0]});
+  const ser=[...p.latency_series].sort((a,b)=>a.ts_ms-b.ts_ms);
+  chart('pf-ts',{type:'line',data:{labels:ser.map(x=>fmtDate(x.ts_ms)),datasets:[{label:'turn time',data:ser.map(x=>x.latency_ms/1000),
+      borderColor:PAL[1],backgroundColor:PAL[1]+'22',fill:true,tension:.25,pointRadius:2,borderWidth:1.5}]},
+    options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{display:false},tooltip:{callbacks:{label:c=>' '+c.parsed.y.toFixed(1)+'s'}}},
+      scales:{x:{grid:GRID,ticks:{maxTicksLimit:8,maxRotation:0}},y:{beginAtZero:true,grid:GRID,ticks:{callback:v=>v+'s'}}}}});
+  chart('pf-scatter',{type:'scatter',data:{datasets:[{label:'turns',data:p.latency_series.map(x=>({x:x.tokens,y:x.latency_ms/1000})),
+      backgroundColor:PAL[3]+'cc',pointRadius:4}]},
+    options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{display:false},tooltip:{callbacks:{label:c=>fmtTok(c.parsed.x)+' tok · '+c.parsed.y.toFixed(1)+'s'}}},
+      scales:{x:{grid:GRID,title:{display:true,text:'tokens (input+output)'},ticks:{callback:fmtTok}},y:{beginAtZero:true,grid:GRID,title:{display:true,text:'seconds'}}}}});
+  bar('pf-reason',['with reasoning','no reasoning'],[p.reasoning_turns,D.kpis.turns-p.reasoning_turns],{colors:[PAL[7],PAL[9]]});
+};
+
+RENDER.tokens=()=>{
+  const t=D.tokens, T=t.totals, c=t.cost;
+  const sc=t.projection?t.projection.scaled:null;
+  const usd0=v=>v==null?'—':'$'+Math.round(v).toLocaleString('en-US');
+  H('tokens',`
+   <div class="grid g4" style="margin-bottom:16px">
+     ${kpi('Total tokens',fmtTok(T.total),'input + output')}
+     ${kpi('Cache reads',fmtTok(T.cache_read),`${t.cache_hit_ratio}% cache hit rate`,'cy')}
+     ${kpi('Output tokens',fmtTok(T.output),'generated by model','pp')}
+     ${kpi('Reasoning tokens',fmtTok(T.reasoning),'extended thinking','pk')}
+   </div>
+   <div class="sec-title">Estimated cost · ${c.model}</div>
+   <div class="note">Approximate, at <b>${c.model}</b> rates (USD / 1M tokens): fresh input <b>$${c.rates.input}</b> · cached input <b>$${c.rates.cached_input}</b> · output <b>$${c.rates.output}</b> (thinking billed as output). Prompt caching saved an estimated <b>${fmtUSD(c.cache_savings)}</b> (${c.cache_savings_pct}%) vs. ${fmtUSD(c.without_caching)} un-cached. Edit <code>PRICING</code> in build_dashboard.py to re-price.</div>
+   <div class="grid g4" style="margin-bottom:16px">
+     ${kpi('Total est. cost',fmtUSD(c.total),`over ${m.n_days} days`)}
+     ${kpi('Per turn',fmtUSD(c.per_turn),`${D.kpis.turns} turns`,'cy')}
+     ${kpi('Per active day',fmtUSD(c.per_day),'avg daily spend','pp')}
+     ${kpi('Per user',fmtUSD(c.per_user),`${D.kpis.users} users`,'pk')}
+   </div>
+   ${t.projection?`<div class="sec-title">Projection (naïve)</div>
+   <div class="note">Straight-line projection from the observed daily average over <b>${t.projection.basis_days}</b> active days (≈ <b>${fmtTok(t.projection.tokens_per_day)}</b> tokens/day · <b>${fmtUSD(t.projection.cost_per_day)}</b>/day). Assumes flat usage at current levels and user count — a planning estimate, not a forecast.</div>
+   <div class="grid g4" style="margin-bottom:16px">
+     ${kpi('Proj. 30-day tokens',fmtTok(t.projection.proj_30d_tokens),'at current daily rate')}
+     ${kpi('Proj. 30-day cost',fmtUSD(t.projection.proj_30d_cost),`${c.model} rates`,'cy')}
+     ${kpi('Proj. 90-day tokens',fmtTok(t.projection.proj_90d_tokens),'at current daily rate','pp')}
+     ${kpi('Proj. 90-day cost',fmtUSD(t.projection.proj_90d_cost),`${c.model} rates`,'pk')}
+   </div>`:''}
+   ${sc?`<div class="sec-title">Projection scaled to ${fmt(sc.target_users)} users</div>
+   <div class="note">Holds the observed <b>per-user</b> usage intensity constant — <b>${fmtTok(sc.tokens_per_user_per_day)}</b> tokens/user/day, <b>${fmtUSD(sc.cost_per_user_per_month)}</b>/user/month — and scales the fleet from the <b>${fmt(sc.current_users)}</b> user(s) in view to <b>${fmt(sc.target_users)}</b> (<b>×${sc.multiplier}</b>), at ${c.model} rates. A capacity-planning estimate: assumes new users behave like current ones and ignores onboarding ramp, cache-hit changes at scale, and volume pricing. Respects the active date/persona/scope filters, so the per-user basis follows whatever slice is selected.</div>
+   <div class="grid g4" style="margin-bottom:16px">
+     ${kpi(`Cost / day @ ${fmt(sc.target_users)}`,usd0(sc.cost_per_day),`${fmtTok(sc.tokens_per_day)} tokens/day`)}
+     ${kpi('Cost / 30 days',usd0(sc.proj_30d_cost),`${fmtTok(sc.proj_30d_tokens)} tokens`,'cy')}
+     ${kpi('Cost / 90 days',usd0(sc.proj_90d_cost),`${fmtTok(sc.proj_90d_tokens)} tokens`,'pp')}
+     ${kpi('Cost / year',usd0(sc.proj_365d_cost),`${fmt(sc.target_users)} users, flat usage`,'pk')}
+   </div>
+   <div class="grid g2" style="margin-bottom:16px">
+     <div class="card"><h3>Monthly cost vs fleet size</h3><p class="desc">30-day spend at current per-user intensity, from today's fleet up to ${fmt(sc.target_users)} users (${c.model} rates)</p><div class="chart-wrap"><canvas id="tk-scale"></canvas></div></div>
+     <div class="card"><h3>Scaling assumptions</h3><p class="desc">How the ${fmt(sc.target_users)}-user estimate is built</p>
+       <div class="scroll" style="max-height:300px"><table><tbody>
+         <tr><td>Users in current view</td><td class="num">${fmt(sc.current_users)}</td></tr>
+         <tr><td>Target fleet size</td><td class="num">${fmt(sc.target_users)}</td></tr>
+         <tr><td>Scale multiplier</td><td class="num">×${sc.multiplier}</td></tr>
+         <tr><td>Tokens / user / day</td><td class="num">${fmtTok(sc.tokens_per_user_per_day)}</td></tr>
+         <tr><td>Cost / user / month</td><td class="num">${fmtUSD(sc.cost_per_user_per_month)}</td></tr>
+         <tr><td>Projected tokens / day</td><td class="num">${fmtTok(sc.tokens_per_day)}</td></tr>
+         <tr><td>Projected cost / 30 days</td><td class="num">${usd0(sc.proj_30d_cost)}</td></tr>
+         <tr><td>Projected cost / year</td><td class="num">${usd0(sc.proj_365d_cost)}</td></tr>
+       </tbody></table></div></div>
+   </div>`:''}
+   <div class="grid g2" style="margin-bottom:16px">
+     <div class="card"><h3>Cost breakdown</h3><p class="desc">Where the dollars go — note cached input is ~9% the price of fresh</p><div class="chart-wrap"><canvas id="tk-cost"></canvas></div></div>
+     <div class="card"><h3>Estimated cost per day</h3><p class="desc">Daily spend (IST)</p><div class="chart-wrap"><canvas id="tk-costday"></canvas></div></div>
+   </div>
+   <div class="grid g2" style="margin-bottom:16px">
+     <div class="card"><h3>Token composition</h3><p class="desc">Where the tokens go. Heavy <b>input + cache reads</b> reflect large system prompt + tool results re-fed each step.</p><div class="chart-wrap tall"><canvas id="tk-comp"></canvas></div></div>
+     <div class="card"><h3>Tokens per day</h3><p class="desc">Daily consumption (stacked, IST)</p><div class="chart-wrap tall"><canvas id="tk-day"></canvas></div></div>
+   </div>
+   <div class="grid g2">
+     <div class="card"><h3>Tokens per turn</h3><p class="desc">Distribution of per-turn token weight (input+output)</p><div class="chart-wrap"><canvas id="tk-ptt"></canvas></div></div>
+     <div class="card"><h3>Per-turn token stats</h3>
+       <div class="inline-stats" style="margin-top:18px">
+         <div><div class="n">${fmtTok(t.per_turn_stats.p50)}</div><div class="l">median / turn</div></div>
+         <div><div class="n">${fmtTok(t.per_turn_stats.p90)}</div><div class="l">p90 / turn</div></div>
+         <div><div class="n">${fmtTok(t.per_turn_stats.max)}</div><div class="l">heaviest turn</div></div>
+         <div><div class="n">${fmtTok(t.per_turn_stats.mean)}</div><div class="l">mean / turn</div></div>
+       </div>
+       <p class="desc" style="margin-top:18px">Cache efficiency</p>
+       <div class="chart-wrap short"><canvas id="tk-cache"></canvas></div>
+     </div>
+   </div>`);
+  doughnut('tk-comp',['Input (fresh)','Cache reads','Output','Reasoning'],[T.input-T.cache_read>0?T.input-T.cache_read:T.input,T.cache_read,T.output,T.reasoning],{colors:[PAL[8],PAL[1],PAL[3],PAL[4]],fmtv:fmtTok});
+  const pd=t.per_day;
+  chart('tk-day',{type:'bar',data:{labels:pd.map(d=>dmonth(d.date)),datasets:[
+      {label:'Cache reads',data:pd.map(d=>d.cache_read),backgroundColor:PAL[1],stack:'s'},
+      {label:'Input (fresh)',data:pd.map(d=>Math.max(0,d.input-d.cache_read)),backgroundColor:PAL[8],stack:'s'},
+      {label:'Output',data:pd.map(d=>d.output),backgroundColor:PAL[3],stack:'s'},
+      {label:'Reasoning',data:pd.map(d=>d.reasoning),backgroundColor:PAL[4],stack:'s'}]},
+    options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{position:'top'},tooltip:{callbacks:{label:c=>' '+c.dataset.label+': '+fmtTok(c.parsed.y)}}},
+      scales:{x:{stacked:true,grid:GRID},y:{stacked:true,beginAtZero:true,grid:GRID,ticks:{callback:fmtTok}}}}});
+  bar('tk-ptt',t.per_turn_hist.map(x=>x.label),t.per_turn_hist.map(x=>x.count),{color:PAL[2]});
+  chart('tk-cache',{type:'doughnut',data:{labels:['Served from cache','Fresh input'],datasets:[{data:[T.cache_read,Math.max(0,T.input-T.cache_read)],backgroundColor:[PAL[0],PAL[9]],borderColor:'#151d36',borderWidth:2}]},
+    options:{responsive:true,maintainAspectRatio:false,cutout:'70%',plugins:{legend:{position:'bottom'},tooltip:{callbacks:{label:x=>' '+x.label+': '+fmtTok(x.parsed)}}}}});
+  doughnut('tk-cost',['Fresh input','Cached input','Output'],[c.input,c.cached,c.output],{colors:[PAL[8],PAL[1],PAL[3]],fmtv:fmtUSD});
+  bar('tk-costday',pd.map(d=>dmonth(d.date)),pd.map(d=>+((Math.max(0,d.input-d.cache_read)*c.rates.input + d.cache_read*c.rates.cached_input + (d.output+d.reasoning)*c.rates.output)/1e6).toFixed(4)),{color:PAL[5],fmtv:fmtUSD});
+  if(sc){
+    const cm=sc.cost_per_user_per_month;
+    const pts=[sc.current_users,1000,5000,10000,15000,20000,sc.target_users]
+      .filter((v,i,a)=>v>0&&a.indexOf(v)===i).sort((a,b)=>a-b);
+    lineChart('tk-scale',pts.map(u=>fmt(u)),[{label:'Monthly cost',data:pts.map(u=>+(cm*u).toFixed(0)),color:PAL[4],fill:true}],{fmtv:usd0});
+  }
+};
+
+RENDER.outcomes=()=>{
+  const o=D.outcomes;
+  const ocol={done:'#34d399',cancelled:'#fbbf24',errored:'#f87171'};
+  const total=o.by_outcome.reduce((a,b)=>a+b.count,0);
+  const done=(o.by_outcome.find(x=>x.outcome==='done')||{count:0}).count;
+  H('outcomes',`
+   <div class="grid g4" style="margin-bottom:16px">
+     ${kpi('Success rate',(total?(done/total*100).toFixed(1):'0.0')+'%',`${done}/${total} turns "done"`)}
+     ${kpi('Errored',fmt(o.errored),'turn ended in error',o.errored?'bad':'')}
+     ${kpi('Cancelled',fmt(o.cancelled),'user stopped generation',o.cancelled?'warn':'')}
+     ${kpi('Tool error rate',(D.kpis.total_tool_calls?(D.tools.table.reduce((a,b)=>a+b.errors,0)/D.kpis.total_tool_calls*100).toFixed(1):'0.0')+'%','of all tool calls','cy')}
+   </div>
+   <div class="grid g2" style="margin-bottom:16px">
+     <div class="card"><h3>Turn outcomes</h3><p class="desc">Final state of each turn</p><div class="chart-wrap"><canvas id="oc-out"></canvas></div></div>
+     <div class="card"><h3>Stop reasons</h3><p class="desc">Why generation halted</p><div class="chart-wrap"><canvas id="oc-stop"></canvas></div></div>
+   </div>
+   <div class="card"><h3>Tools by error rate</h3><p class="desc">Tools whose calls returned <code>is_error</code> (only tools with ≥1 error shown)</p>
+     <div class="scroll" style="max-height:320px"><table><thead><tr><th>Tool</th><th class="num">Calls</th><th class="num">Errors</th><th class="num">Error rate</th></tr></thead><tbody>
+     ${D.tools.table.filter(x=>x.errors>0).sort((a,b)=>b.error_rate-a.error_rate).map(x=>`<tr><td>${esc(x.name)}</td><td class="num">${x.calls}</td><td class="num" style="color:var(--bad)">${x.errors}</td><td class="num">${x.error_rate}%</td></tr>`).join('')||'<tr><td class="empty" colspan=4>No tool errors recorded 🎉</td></tr>'}
+     </tbody></table></div></div>`);
+  doughnut('oc-out',o.by_outcome.map(x=>x.outcome),o.by_outcome.map(x=>x.count),{colors:o.by_outcome.map(x=>ocol[x.outcome]||PAL[5])});
+  bar('oc-stop',o.by_stop_reason.map(x=>x.reason),o.by_stop_reason.map(x=>x.count),{color:PAL[6]});
+};
+
+// human-readable names for the automated eval rules (codes live in eval_checks.py)
+const RULE_LABELS={
+  STALE_AS_LIVE:'Stale data narrated as live',
+  PNL_WRONG_DATE:'P&L queried for the wrong date',
+  DEDUP_RETRY_AFTER_ERROR:'Duplicate re-issue of a call that errored',
+  DEDUP_RETRY_AFTER_SUCCESS:'Duplicate re-issue of a call that succeeded',
+  TOOL_PARAM_ERROR:'Malformed tool call (bad parameters)',
+  TOOL_ERROR_THEN_RECOVERED:'Tool errored, then succeeded on a corrected retry',
+  EMPTY_ERRORED_TURN:'Errored turn with no reply',
+  LEAKED_TOOL_SYNTAX:'Tool syntax leaked into reply',
+  LATEX_LEAK:'Raw LaTeX shown in reply',
+  DUP_TEXT_BLOCK:'Same paragraph repeated in reply',
+  OVER_BUDGET_LATENCY:'Turn over the latency budget',
+  ASKUSER_TIMEOUT_THEN_ACTION:'Acted after unanswered confirmation',
+  SUCCESS_ON_FAILURE:'Claimed success on a failed action',
+  TOPN_CAP:'Results capped without disclosure',
+  GREEKS_NO_SOURCE:'Greeks shown without source data',
+  NUMBER_NOT_GROUNDED:'Numbers not grounded in tool data',
+  NUMBER_UNGROUNDED_NO_FETCH:'Numbers quoted with no tool source in the thread',
+  SUM_NE_TOTAL:'Table total ≠ sum of its rows',
+  SR_LEVEL_NOT_IN_DATA:'Support/resistance level not in data',
+};
+const ruleLabel=r=>RULE_LABELS[r]||(r||'').replace(/_/g,' ').toLowerCase().replace(/^\w/,c=>c.toUpperCase());
+
+RENDER.quality=()=>{
+  const Q=D.quality;
+  if(!Q){ H('quality','<div class="empty">No quality data — rebuild dashboard_data.js (this needs the updated build_dashboard.py + eval_checks.py).</div>'); return; }
+  const sevCol={high:'var(--bad)',medium:'var(--warn)',low:'var(--muted)'};
+  const sevPill=s=>`<span class="pill" style="background:${s==='high'?'rgba(248,113,113,.15)':s==='medium'?'rgba(251,191,36,.15)':'rgba(147,160,189,.15)'};color:${sevCol[s]}">${s}</span>`;
+  const tierPill=t=>`<span class="tag" style="color:${t==='A'?'var(--good)':'var(--accent2)'}">Tier ${t}</span>`;
+  const all=[...D.queries.all].filter(r=>r.violations&&r.violations.length).sort((a,b)=>b.ts_ms-a.ts_ms);
+  const aTurns=all.filter(r=>r.violations.some(x=>x.tier==='A'));
+  const bTurns=all.filter(r=>r.violations.some(x=>x.tier==='B'));
+  H('quality',`
+   <div class="note">Automated eval pass over every turn — no LLM, all checks run from the archived turn JSON in <code>eval_checks.py</code>. <b>Tier A</b> rules are deterministic (high-precision) and counted as confirmed defects. <b>Tier B</b> rules are heuristic and shown as a <b>review queue</b> — candidates to confirm/dismiss, not counted in the headline. Click any turn row to read its full transcript.</div>
+   <div class="grid g4" style="margin-bottom:16px">
+     ${kpi('Turns analysed',fmt(Q.total_turns),m.scope==='all'?'all users':'external only')}
+     ${kpi('Clean turns',Q.total_turns?Q.clean_pct+'%':'N/A',Q.total_turns?`${fmt(Q.total_turns-Q.flagged_turns)} of ${fmt(Q.total_turns)}`:'no turns in range',Q.total_turns&&Q.clean_pct<80?'warn':'')}
+     ${kpi('Flagged · Tier A',fmt(Q.flagged_turns),'≥1 confirmed rule',Q.flagged_turns?'bad':'')}
+     ${kpi('Review queue · Tier B',fmt(Q.tierB_candidate_turns),'heuristic candidates','cy')}
+     ${kpi('High severity',fmt(Q.severity.high),'Tier-A high hits',Q.severity.high?'bad':'')}
+     ${kpi('Medium severity',fmt(Q.severity.medium),'Tier-A medium','warn')}
+     ${kpi('Low severity',fmt(Q.severity.low),'Tier-A low')}
+     ${kpi('Rules firing',Q.by_rule.length,'distinct checks','pp')}
+   </div>
+   <div class="grid g2" style="margin-bottom:16px">
+     <div class="card"><h3>Flagged turns by dimension (Tier A)</h3><p class="desc">Confirmed defects grouped by evaluation dimension</p><div class="chart-wrap tall"><canvas id="ql-dim"></canvas></div></div>
+     <div class="card"><h3>Quality trend (IST)</h3><p class="desc">Line = % of that day's turns clean — hover for raw counts · watch this rise as fixes ship</p><div class="chart-wrap tall"><canvas id="ql-trend"></canvas></div></div>
+   </div>
+   <div class="card" style="margin-bottom:16px"><h3>Rules firing</h3><p class="desc">Every automated check · count = turns where it fired · % of ${fmt(Q.total_turns)} turns · hover a rule for its internal code</p>
+     <div class="scroll"><table><thead><tr><th>Rule</th><th>Tier</th><th>Severity</th><th>Dimension</th><th class="num">Turns</th><th class="num">%</th></tr></thead><tbody>
+     ${Q.by_rule.map(r=>`<tr><td title="${esc(r.rule)}" style="cursor:help"><b>${esc(ruleLabel(r.rule))}</b></td><td>${tierPill(r.tier)}</td><td>${sevPill(r.severity)}</td><td style="color:var(--muted)">${esc(r.dim)}</td><td class="num">${r.count}</td><td class="num">${(r.count/Q.total_turns*100).toFixed(1)}%</td></tr>`).join('')}
+     </tbody></table></div></div>
+   <div class="grid g2" style="margin-bottom:16px">
+     <div class="card"><h3>Flag rate by user (Tier A)</h3><p class="desc">Which users hit the worst experience · flagged turns / 100 turns</p>
+       <div class="scroll" style="max-height:340px"><table><thead><tr><th>User</th><th>User ID</th><th class="num">Turns</th><th class="num">Flagged</th><th class="num">/100</th></tr></thead><tbody>
+       ${Q.by_user.filter(u=>u.turns>0).map(u=>`<tr><td>${esc(u.name||(u.user_id||'').slice(0,8))}</td><td class="uid">${esc(u.user_id||'')}</td><td class="num">${u.turns}</td><td class="num">${u.flags?'<span style="color:var(--bad)">'+u.flags+'</span>':0}</td><td class="num">${u.per100}</td></tr>`).join('')}
+       </tbody></table></div></div>
+     <div class="card"><h3>Tier-B review queue by dimension</h3><p class="desc">Heuristic candidates awaiting confirm/dismiss</p>
+       ${Q.by_dimension_tierB.length?`<div class="chart-wrap"><canvas id="ql-dimb"></canvas></div>`:'<div class="empty">No Tier-B candidates in this dataset.</div>'}</div>
+   </div>
+   <div class="card" style="margin-bottom:16px"><h3>Flagged turns — Tier A (${aTurns.length})</h3><p class="desc">Click a row to expand the full turn transcript · hover a rule chip for its evidence</p>
+     <input class="filterbox" id="qlfilter" placeholder="Filter by rule, dimension, user, user id, query…">
+     <div class="scroll"><table id="ql-flagged"><thead><tr><th style="width:22px"></th><th>When (IST)</th><th>User</th><th>User ID</th><th>Thread ID</th><th>Rules fired</th><th>Query</th></tr></thead><tbody></tbody></table></div></div>
+   <div class="card"><h3>Review queue — Tier B (${bTurns.length})</h3><p class="desc">Heuristic candidates — read the turn, then confirm (real) or dismiss (false positive)</p>
+     <div class="scroll"><table id="ql-review"><thead><tr><th style="width:22px"></th><th>When (IST)</th><th>User</th><th>User ID</th><th>Thread ID</th><th>Candidate rules</th><th>Evidence</th></tr></thead><tbody></tbody></table></div></div>
+  `);
+  bar('ql-dim',Q.by_dimension.map(d=>d.dimension),Q.by_dimension.map(d=>d.count),{horizontal:true,colors:Q.by_dimension.map((_,i)=>PAL[i%PAL.length])});
+  if(Q.by_dimension_tierB.length) bar('ql-dimb',Q.by_dimension_tierB.map(d=>d.dimension),Q.by_dimension_tierB.map(d=>d.count),{horizontal:true,color:PAL[1]});
+  const bd=Q.by_day;
+  chart('ql-trend',{type:'line',data:{labels:bd.map(d=>dmonth(d.date)),datasets:[
+     {label:'Clean % of turns',data:bd.map(d=>d.turns?+((d.turns-d.flagged)/d.turns*100).toFixed(1):0),borderColor:PAL[0],backgroundColor:'rgba(54,211,153,.12)',fill:true,tension:.3,borderWidth:2,pointRadius:2,pointHoverRadius:4}
+   ]},options:{responsive:true,maintainAspectRatio:false,interaction:{mode:'index',intersect:false},
+     plugins:{legend:{position:'top'},tooltip:{callbacks:{label:c=>{const d=bd[c.dataIndex];return ` ${c.parsed.y}% clean · ${d.turns-d.flagged} of ${d.turns} turns`;}}}},
+     scales:{x:{grid:GRID},y:{beginAtZero:true,max:100,grid:GRID,ticks:{callback:v=>v+'%'}}}}});
+  const ruleChips=(vs,tier)=>vs.filter(x=>x.tier===tier).map(x=>`<span class="tag" title="${esc(x.rule)} · ${esc(x.dim)} — ${esc(x.evidence)}" style="color:${sevCol[x.severity]};cursor:help">${esc(ruleLabel(x.rule))}</span>`).join(' ');
+  const tbA=$('#ql-flagged tbody');
+  const rowA=(r,i)=>`<tr class="qrow" data-i="${i}"><td><span class="caret">▸</span></td><td>${fmtDate(r.ts_ms)}</td><td>${esc(r.user)}</td><td class="uid">${esc(r.user_id||'')}</td><td class="uid">${esc(r.thread||'')}</td><td style="white-space:normal;max-width:340px">${ruleChips(r.violations,'A')}</td><td class="qtext">${esc(r.text)}</td></tr><tr class="qdetail" style="display:none"><td colspan="7"></td></tr>`;
+  const drawA=f=>{const ff=f.toLowerCase();
+    const rows=aTurns.map((r,i)=>[r,i]).filter(([r])=>!ff||(r.text+r.user+(r.user_id||'')+(r.thread||'')+r.violations.map(x=>x.rule+' '+ruleLabel(x.rule)+' '+x.dim).join(' ')).toLowerCase().includes(ff));
+    tbA.innerHTML=rows.length?rows.map(([r,i])=>rowA(r,i)).join(''):'<tr><td class="empty" colspan=7>no match</td></tr>';};
+  drawA(''); $('#qlfilter').oninput=e=>drawA(e.target.value);
+  wireTurnExpand(tbA,aTurns);
+  const tbB=$('#ql-review tbody');
+  const rowB=(r,i)=>`<tr class="qrow" data-i="${i}"><td><span class="caret">▸</span></td><td>${fmtDate(r.ts_ms)}</td><td>${esc(r.user)}</td><td class="uid">${esc(r.user_id||'')}</td><td class="uid">${esc(r.thread||'')}</td><td style="white-space:normal;max-width:240px">${ruleChips(r.violations,'B')}</td><td class="qtext">${esc(r.violations.filter(x=>x.tier==='B').map(x=>x.evidence).join(' · '))}</td></tr><tr class="qdetail" style="display:none"><td colspan="7"></td></tr>`;
+  tbB.innerHTML=bTurns.length?bTurns.map((r,i)=>rowB(r,i)).join(''):'<tr><td class="empty" colspan=7>No Tier-B candidates.</td></tr>';
+  wireTurnExpand(tbB,bTurns);
+};
+
+// boot
+if(RAW && CALCOK){ buildScopeToggle(); buildFilterBar(); recompute(); }
+{ const _dl=$('#dlBtn'); if(_dl){ if(RAW && CALCOK) _dl.onclick=downloadData; else _dl.style.display='none'; } }
+if(!LIBOK){ document.querySelectorAll('.chart-wrap,.wc').forEach(e=>e.innerHTML='<div class="empty">Chart library not loaded — open via the local server (run.sh) or check assets/.</div>'); }
+</script>
+</body>
+</html>

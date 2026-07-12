@@ -1,0 +1,11 @@
+[Unit]
+Description=Run Kyro dashboard refresh every hour
+
+[Timer]
+OnBootSec=2min
+OnUnitActiveSec=1h
+Persistent=true
+AccuracySec=30s
+
+[Install]
+WantedBy=timers.target

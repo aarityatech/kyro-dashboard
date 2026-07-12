@@ -1,0 +1,13 @@
+[Unit]
+Description=Kyro dashboard refresh (S3 sync + rebuild + publish)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+# adjust User / WorkingDirectory to match your instance
+User=ec2-user
+WorkingDirectory=/opt/kyro-analysis
+Environment=AWS_DEFAULT_REGION=ap-south-1
+ExecStart=/opt/kyro-analysis/refresh.sh
+# logs -> journalctl -u kyro-refresh.service

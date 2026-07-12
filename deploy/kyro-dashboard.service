@@ -1,0 +1,16 @@
+[Unit]
+Description=Kyro analytics dashboard (static HTTP server, serves webroot only)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+User=ec2-user
+WorkingDirectory=/opt/kyro-analysis
+# Serves ONLY the publish webroot (not the repo root), so threads/ and
+# user-info.sql are never exposed. Use this if you don't want nginx.
+ExecStart=/usr/bin/python3 -m http.server 8004 --bind 0.0.0.0 --directory /opt/kyro-analysis/webroot
+Restart=always
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target
