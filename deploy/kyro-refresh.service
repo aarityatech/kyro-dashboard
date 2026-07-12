@@ -6,8 +6,9 @@ Wants=network-online.target
 [Service]
 Type=oneshot
 # adjust User / WorkingDirectory to match your instance
-User=ec2-user
-WorkingDirectory=/opt/kyro-analysis
+User=ubuntu
+Group=ubuntu
+WorkingDirectory=/home/ubuntu/kyro-dashboard
 Environment=AWS_DEFAULT_REGION=ap-south-1
-ExecStart=/opt/kyro-analysis/refresh.sh
+ExecStart=/home/ubuntu/kyro-dashboard/refresh.sh
 # logs -> journalctl -u kyro-refresh.service

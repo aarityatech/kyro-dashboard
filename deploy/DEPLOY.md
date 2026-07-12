@@ -20,7 +20,7 @@ conversation. Do **not** put this on the open internet. Pick at least one:
 - **Lock the security group** to your office/VPN CIDR (don't use `0.0.0.0/0`).
 - **Require a login** — nginx basic auth (steps in `nginx-kyro.conf`), or an ALB with auth.
 - **Keep it private** — private subnet, reach it via SSH tunnel:
-  `ssh -L 8080:localhost:80 ec2-user@<host>` then open `http://localhost:8080`.
+  `ssh -L 8080:localhost:80 ubuntu@<host>` then open `http://localhost:8080`.
 
 The serving layer is an **allowlist**: only `index.html`, `dashboard_data.js`,
 and `assets/` are published to `webroot/`. The raw `threads/` archive and
@@ -62,19 +62,19 @@ unzip -q awscliv2.zip && sudo ./aws/install && rm -rf aws awscliv2.zip
 ## 3. Put the code on the box
 
 ```bash
-sudo mkdir -p /opt/kyro-analysis && sudo chown "$USER" /opt/kyro-analysis
+mkdir -p ~/kyro-dashboard
 # from your laptop — you do NOT need to copy threads/ (refresh.sh pulls it):
-rsync -av --exclude threads --exclude 'dashboard_data.js' ./ ec2-user@<host>:/opt/kyro-analysis/
+rsync -av --exclude threads --exclude 'dashboard_data.js' ./ ubuntu@<host>:~/kyro-dashboard/
 ```
 Verify the role can read the bucket:
 ```bash
-cd /opt/kyro-analysis && aws s3 ls s3://prod-sage-ai/archive/threads/ | head
+cd ~/kyro-dashboard && aws s3 ls s3://prod-sage-ai/archive/threads/ | head
 ```
 
 ## 4. First refresh (sync + build + publish)
 
 ```bash
-cd /opt/kyro-analysis && chmod +x refresh.sh && ./refresh.sh
+cd ~/kyro-dashboard && chmod +x refresh.sh && ./refresh.sh
 ls webroot/            # -> index.html  dashboard_data.js  assets/
 ```
 
@@ -94,7 +94,7 @@ journalctl -u kyro-refresh.service -f        # tail refresh logs
 
 **Cron alternative** (if you prefer): run at :17 each hour
 ```bash
-( crontab -l 2>/dev/null; echo "17 * * * * /opt/kyro-analysis/refresh.sh >> /var/log/kyro-refresh.log 2>&1" ) | crontab -
+( crontab -l 2>/dev/null; echo "17 * * * * \$HOME/kyro-dashboard/refresh.sh >> /var/log/kyro-refresh.log 2>&1" ) | crontab -
 ```
 
 ## 6. Serve the endpoint
