@@ -1,0 +1,14 @@
+[Unit]
+Description=Kyro dashboard redirect (old host -> new instance)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+User=ubuntu
+# EDIT the new instance IP below (keep :8004, or use the new box's serving port).
+ExecStart=/usr/bin/python3 /home/ubuntu/kyro-dashboard/deploy/redirect.py http://NEW_INSTANCE_IP:8004 8004
+Restart=always
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target
