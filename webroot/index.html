@@ -310,13 +310,18 @@ function filtersNarrowDates(){
 function recompute(){
   const raw=currentRaw();
   let ts=raw.turns;
+  if(FILTERS.persona) ts=ts.filter(t=>personaOf(raw,t.user_id)===FILTERS.persona);
+  // History = persona-filtered but NOT date-filtered. buildData uses it for
+  // metrics that need data outside the selected range (first-seen for the
+  // new/returning splits, trailing-7d stickiness window, M1 cohorts, thread
+  // start dates) while still rendering only the selected range.
+  const hist=ts;
   // Only filter when a bound actually narrows the full range — at the default
   // (from=beginning, to=now) this is a true no-op, so the default view matches
   // unfiltered aggregation exactly (incl. any turns with a missing timestamp).
   if(FILTERS.from && raw.meta.date_min && FILTERS.from>raw.meta.date_min){ const f=istDayStartMs(FILTERS.from); ts=ts.filter(t=>t.ts_ms>=f); }
   if(FILTERS.to && raw.meta.date_max && FILTERS.to<raw.meta.date_max){ const e=istDayEndMs(FILTERS.to); ts=ts.filter(t=>t.ts_ms<=e); }
-  if(FILTERS.persona) ts=ts.filter(t=>personaOf(raw,t.user_id)===FILTERS.persona);
-  D=window.KyroCalc.buildData(raw,ts);
+  D=window.KyroCalc.buildData(raw,ts,hist);
   m=D.meta;
   applyChrome();
   Object.keys(charts).forEach(k=>{ try{charts[k].destroy()}catch(e){} delete charts[k]; });
@@ -484,7 +489,7 @@ RENDER.engagement=()=>{
   if(!E){ H('engagement','<div class="empty">No engagement data — rebuild with build_dashboard.py.</div>'); return; }
   const m1=E.m1.overall_pct;
   H('engagement',`
-   <div class="note">Engagement & retention over a short window (<b>${m.n_days}</b> active days, ${m.date_min} → ${m.date_max}). Weekly/monthly cohorts are sparse here — read as directional, not statistical.</div>
+   <div class="note">Engagement & retention over a short window (<b>${m.n_days}</b> active days, ${m.date_min} → ${m.date_max}). Weekly/monthly cohorts are sparse here — read as directional, not statistical.${filtersNarrowDates()?' <b>Date filter active:</b> charts show the selected range only, but new/returning splits, the trailing-7d stickiness window, WAU and M1 cohorts are computed against full history, so they are not truncated at the range edges.':''}</div>
    <div class="grid g4" style="margin-bottom:16px">
      ${kpi('Avg turns / day',E.avg_turns_per_day,'across active days')}
      ${kpi('Turns / user / day',E.avg_turns_per_user_per_day,'per active user','cy')}

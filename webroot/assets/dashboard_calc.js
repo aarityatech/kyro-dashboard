@@ -130,9 +130,15 @@ const LAT_EDGES = [2, 5, 10, 20, 30, 60];
 const LAT_LABELS = ['0-2s', '2-5s', '5-10s', '10-20s', '20-30s', '30-60s', '60s+'];
 
 // =============================================================== buildData
-// raw   — the full payload written by build_dashboard.py
-// turns — the (possibly filtered) subset of raw.turns to aggregate
-function buildData(raw, turnsIn) {
+// raw     — the full payload written by build_dashboard.py
+// turns   — the (possibly filtered) subset of raw.turns to aggregate
+// history — same population as turns but WITHOUT the date filter (persona/scope
+//           still applied). Metrics that need data outside the selected range —
+//           new/returning splits, trailing-7d stickiness, M1 cohorts, thread
+//           start dates — are computed from history, then only rows inside the
+//           selected range are emitted. Omitting it falls back to turns.
+function buildData(raw, turnsIn, historyIn) {
+  const history = historyIn || turnsIn;
   const identMap = raw.ident || {};
   const CLIENT_TOOLS = new Set(raw.client_tools || []);
   const PRICING = raw.pricing || { model: '?', input_per_m: 0, cached_input_per_m: 0, output_per_m: 0 };
@@ -151,7 +157,6 @@ function buildData(raw, turnsIn) {
   // ---------- daily / hourly / dow
   const daily = new Map();
   const hourly = new Counter(), dow = new Counter();
-  const threadFirstDay = new Map();          // thread_id -> [ms, day]
   const userDays = new Map();                // user_id -> Set(day)
   for (const t of turns) {
     if (!t.ts_ms) continue;
@@ -172,11 +177,17 @@ function buildData(raw, turnsIn) {
     Dd.tokens += tk.input + tk.output;
     Dd.tool_calls += t.tools.length;
     hourly.add(P.hour); dow.add(P.dow);
+  }
+  // Thread start day comes from full history so a thread that began before the
+  // selected range isn't re-counted as "started" inside it.
+  const threadFirstDay = new Map();          // thread_id -> [ms, day]
+  for (const t of history) {
+    if (!t.ts_ms) continue;
     const th = t.thread_id;
-    if (!threadFirstDay.has(th) || t.ts_ms < threadFirstDay.get(th)[0]) threadFirstDay.set(th, [t.ts_ms, day]);
+    if (!threadFirstDay.has(th) || t.ts_ms < threadFirstDay.get(th)[0]) threadFirstDay.set(th, [t.ts_ms, istParts(t.ts_ms).day]);
   }
   const threadsStartedByDay = new Counter();
-  for (const [, day] of threadFirstDay.values()) threadsStartedByDay.add(day);
+  for (const [, day] of threadFirstDay.values()) if (daily.has(day)) threadsStartedByDay.add(day);
 
   const sortedDays = [...daily.keys()].sort();
   const dailySeries = sortedDays.map(day => {
@@ -459,9 +470,14 @@ function buildData(raw, turnsIn) {
   const daySlots = ['Pre-market', 'During market', 'Post-market', 'Weekend']
     .map(slot => ({ slot, count: slotCounts[slot] }));
 
+  // First-seen / weekly / monthly bookkeeping is computed over FULL history so
+  // a narrowed date range doesn't relabel long-time users as "new", truncate
+  // the trailing stickiness window, or reset the M1 cohorts. Only rows inside
+  // the selected range (rangeWeeks / rangeMonths / sortedDays) are emitted.
   const userFirstDay = new Map(), userFirstWeek = new Map(), userFirstMonth = new Map();
   const userMonths = new Map(), weekUsers = new Map(), weekLabel = {};
-  for (const t of turns) {
+  const histDayUsers = new Map();            // day -> Set(user) over full history
+  for (const t of history) {
     if (!t.ts_ms) continue;
     const P = istParts(t.ts_ms), uid = t.user_id;
     const wkInfo = isoWeekInfo(P.shifted), wk = wkInfo.wk, mo = P.month, day = P.day;
@@ -473,6 +489,15 @@ function buildData(raw, turnsIn) {
     if (!weekUsers.has(wk)) weekUsers.set(wk, new Set());
     weekUsers.get(wk).add(uid);
     weekLabel[wk] = wkInfo.label;
+    if (!histDayUsers.has(day)) histDayUsers.set(day, new Set());
+    histDayUsers.get(day).add(uid);
+  }
+  const rangeWeeks = new Set(), rangeMonths = new Set();
+  for (const t of turns) {
+    if (!t.ts_ms) continue;
+    const P = istParts(t.ts_ms);
+    rangeWeeks.add(isoWeekInfo(P.shifted).wk);
+    rangeMonths.add(P.month);
   }
 
   const dauSplit = sortedDays.map(day => {
@@ -482,7 +507,10 @@ function buildData(raw, turnsIn) {
     return { date: day, new: nw, existing: uu.size - nw, dau: uu.size };
   });
 
-  const wauSplit = [...weekUsers.keys()].sort().map(wk => {
+  // Weeks are rendered only if the selected range touches them, but each WAU
+  // value counts the FULL week's actives — a range starting mid-week doesn't
+  // understate that week's WAU or mark all of its users "new".
+  const wauSplit = [...weekUsers.keys()].filter(wk => rangeWeeks.has(wk)).sort().map(wk => {
     const uu = weekUsers.get(wk);
     let nw = 0;
     for (const u of uu) if (userFirstWeek.get(u) === wk) nw++;
@@ -490,13 +518,19 @@ function buildData(raw, turnsIn) {
   });
   const peakWau = wauSplit.reduce((a, w) => Math.max(a, w.wau), 0);
 
-  // DAU/WAU stickiness — daily actives ÷ trailing-7d actives
+  // DAU/WAU stickiness — daily actives ÷ trailing-7d actives. The trailing
+  // window reads full-history day sets so the first days of a selected range
+  // aren't computed against a truncated window (which pinned them to 100%).
+  const histDays = [...histDayUsers.keys()].sort();
+  const histEpoch = histDays.map(d => Date.parse(d + 'T00:00:00Z') / 86400000);
   const dayEpoch = sortedDays.map(d => Date.parse(d + 'T00:00:00Z') / 86400000);
   const stickiness = sortedDays.map((day, i) => {
     const win = new Set();
-    for (let j = i; j >= 0; j--) {
-      if (dayEpoch[i] - dayEpoch[j] <= 6) { for (const u of daily.get(sortedDays[j]).users) win.add(u); }
-      else break;
+    for (let j = histDays.length - 1; j >= 0; j--) {
+      const diff = dayEpoch[i] - histEpoch[j];
+      if (diff < 0) continue;
+      if (diff > 6) break;
+      for (const u of histDayUsers.get(histDays[j])) win.add(u);
     }
     const dau = daily.get(day).users.size;
     return { date: day, stickiness: win.size ? r1(dau / win.size * 100) : 0 };
@@ -516,13 +550,16 @@ function buildData(raw, turnsIn) {
   const avgTurnsPerDay = r1(turns.length / nDaysE);
   const avgTurnsPerUserPerDay = r2(turns.length / totalUserActiveDays);
 
-  // M1 monthly cohort retention
+  // M1 monthly cohort retention — cohorts and next-month activity come from
+  // full history (a cohort is "users first seen that month", ever; retention
+  // may resolve in a month after the selected range). Only cohort months the
+  // selected range touches are rendered.
   const nextMonth = mo => {
     const y = +mo.slice(0, 4), mm = +mo.slice(5, 7);
     return mm === 12 ? (y + 1) + '-01' : y + '-' + String(mm + 1).padStart(2, '0');
   };
   const monthsPresent = [...new Set([...userMonths.values()].flatMap(s => [...s]))].sort();
-  const m1Cohorts = monthsPresent.map(mo => {
+  const m1Cohorts = [...rangeMonths].sort().map(mo => {
     const cohort = [...userFirstMonth.entries()].filter(([, fm]) => fm === mo).map(([u]) => u);
     const nm = nextMonth(mo), hasNext = monthsPresent.includes(nm);
     const retained = hasNext ? cohort.filter(u => userMonths.get(u).has(nm)).length : null;
