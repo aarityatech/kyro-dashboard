@@ -550,6 +550,12 @@ function buildData(raw, turnsIn, historyIn) {
   const avgTurnsPerDay = r1(turns.length / nDaysE);
   const avgTurnsPerUserPerDay = r2(turns.length / totalUserActiveDays);
 
+  // Daily engagement depth — turns that day ÷ users active that day
+  const turnsPerUserDaily = sortedDays.map(day => {
+    const Dd = daily.get(day);
+    return { date: day, rate: Dd.users.size ? r2(Dd.turns / Dd.users.size) : 0, turns: Dd.turns, dau: Dd.users.size };
+  });
+
   // M1 monthly cohort retention — cohorts and next-month activity come from
   // full history (a cohort is "users first seen that month", ever; retention
   // may resolve in a month after the selected range). Only cohort months the
@@ -772,6 +778,7 @@ function buildData(raw, turnsIn, historyIn) {
       new_thread_rate_avg: newThreadRateAvg,
       avg_turns_per_day: avgTurnsPerDay,
       avg_turns_per_user_per_day: avgTurnsPerUserPerDay,
+      turns_per_user_daily: turnsPerUserDaily,
       tool_invoked_pct: toolInvokedPct,
       data_tool_invoked_pct: dataToolInvokedPct,
       skill_invoked_pct: skillInvokedPct,

@@ -508,8 +508,11 @@ RENDER.engagement=()=>{
      <div class="card"><h3>Daily active users — new vs returning</h3><p class="desc"><b>New</b> = user's first-ever active day; <b>returning</b> = seen before</p><div class="chart-wrap"><canvas id="en-dau"></canvas></div></div>
      <div class="card"><h3>Weekly active users — new vs returning</h3><p class="desc">ISO weeks (label = week-start Mon). New = user's first active week</p><div class="chart-wrap"><canvas id="en-wau"></canvas></div></div>
    </div>
-   <div class="grid g2">
+   <div class="grid g2" style="margin-bottom:16px">
+     <div class="card"><h3>Turns per user / day</h3><p class="desc">Turns that day ÷ users active that day (engagement depth per active user)</p><div class="chart-wrap"><canvas id="en-tpu"></canvas></div></div>
      <div class="card"><h3>New threads per active user / day</h3><p class="desc">New conversations started ÷ DAU that day</p><div class="chart-wrap"><canvas id="en-ntr"></canvas></div></div>
+   </div>
+   <div class="grid g2">
      <div class="card"><h3>M1 monthly cohort retention</h3><p class="desc">Of users first seen in a month, % active again the next month</p>
        <div class="scroll" style="max-height:300px"><table><thead><tr><th>Cohort month</th><th class="num">Users</th><th class="num">Retained M+1</th><th class="num">M1 %</th></tr></thead><tbody>
        ${E.m1.by_cohort.map(c=>`<tr><td>${esc(c.cohort)}</td><td class="num">${c.size}</td><td class="num">${c.m1_retained==null?'—':c.m1_retained}</td><td class="num">${c.m1_pct==null?'<span style="color:var(--muted2)">pending</span>':c.m1_pct+'%'}</td></tr>`).join('')}
@@ -517,6 +520,7 @@ RENDER.engagement=()=>{
    </div>`);
   bar('en-slot',E.day_slots.map(s=>s.slot),E.day_slots.map(s=>s.count),{colors:E.day_slots.map((_,i)=>PAL[i%PAL.length])});
   lineChart('en-stick',E.stickiness.map(x=>dmonth(x.date)),[{label:'DAU/WAU %',data:E.stickiness.map(x=>x.stickiness),color:PAL[1],fill:true}],{fmtv:v=>v+'%'});
+  lineChart('en-tpu',(E.turns_per_user_daily||[]).map(x=>dmonth(x.date)),[{label:'Turns / user',data:(E.turns_per_user_daily||[]).map(x=>x.rate),color:PAL[4],fill:true}],{fmtv:v=>(+v).toFixed(2)});
   chart('en-dau',{type:'bar',data:{labels:E.dau_split.map(d=>dmonth(d.date)),datasets:[
      {label:'Returning',data:E.dau_split.map(d=>d.existing),backgroundColor:PAL[0],stack:'s'},
      {label:'New',data:E.dau_split.map(d=>d.new),backgroundColor:PAL[3],stack:'s'}]},
