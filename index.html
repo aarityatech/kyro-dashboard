@@ -231,6 +231,7 @@ function applyChrome(){
   const filt=[];
   if(FILTERS.persona) filt.push(`persona: ${esc(personaLabel(FILTERS.persona))}`);
   if(filtersNarrowDates()) filt.push('date range');
+  if(FILTERS.gran&&FILTERS.gran!=='day') filt.push(granAdj().toLowerCase()+' view');
   $('#scopeBar').innerHTML=
     `<div style="display:flex;align-items:center;gap:6px"><span class="dot" style="background:${freshCol}"></span>Data as of <b>${m.generated_at||'—'}</b>${m.generated_at_ms?` <span style="color:var(--muted2)">· ${agoStr(m.generated_at_ms)}</span>`:''}</div>`+
     `<div>${scopeTxt}</div>`+
@@ -295,7 +296,13 @@ function wireTurnExpand(tbody,list){
 // Every metric on the dashboard is recomputed from the raw turns whenever any
 // of these change (buildData in assets/dashboard_calc.js).
 let curScope='external', allLoading=false, scopeToggle=null;
-const FILTERS={ persona:'', from:null, to:null };   // dates as 'YYYY-MM-DD' (IST)
+const FILTERS={ persona:'', from:null, to:null, gran:'day' };   // dates as 'YYYY-MM-DD' (IST); gran: day|week|month
+// Time-series axis labels follow the selected granularity.
+const granNoun=()=>({day:'day',week:'week',month:'month'})[FILTERS.gran]||'day';
+const granAdj=()=>({day:'Daily',week:'Weekly',month:'Monthly'})[FILTERS.gran]||'Daily';
+const fmtPeriod=s=>FILTERS.gran==='month'
+  ? new Date(s+'-01T00:00:00Z').toLocaleDateString('en-IN',{month:'short',year:'numeric',timeZone:'UTC'})
+  : (FILTERS.gran==='week' ? 'wk '+dmonth(s) : dmonth(s));
 const IST_OFF=19800000;
 const todayIST=()=>new Date(Date.now()+IST_OFF).toISOString().slice(0,10);
 const istDayStartMs=d=>Date.parse(d+'T00:00:00Z')-IST_OFF;
@@ -321,7 +328,7 @@ function recompute(){
   // unfiltered aggregation exactly (incl. any turns with a missing timestamp).
   if(FILTERS.from && raw.meta.date_min && FILTERS.from>raw.meta.date_min){ const f=istDayStartMs(FILTERS.from); ts=ts.filter(t=>t.ts_ms>=f); }
   if(FILTERS.to && raw.meta.date_max && FILTERS.to<raw.meta.date_max){ const e=istDayEndMs(FILTERS.to); ts=ts.filter(t=>t.ts_ms<=e); }
-  D=window.KyroCalc.buildData(raw,ts,hist);
+  D=window.KyroCalc.buildData(raw,ts,hist,FILTERS.gran);
   m=D.meta;
   applyChrome();
   Object.keys(charts).forEach(k=>{ try{charts[k].destroy()}catch(e){} delete charts[k]; });
@@ -346,15 +353,18 @@ function buildFilterBar(){
     `<label title="Metrics include turns from this IST date onward">From <input type="date" id="f-from"></label>`+
     `<label title="Metrics include turns up to end of this IST date">To <input type="date" id="f-to"></label>`+
     `<label title="Only include users with this primary trading persona">Persona <select id="f-persona"></select></label>`+
-    `<button id="f-reset" title="Reset to full date range + all personas">Reset</button>`;
+    `<label title="Bucket size for the time-series charts (distinct users are recounted per bucket)">View <select id="f-gran">`+
+      `<option value="day">Daily</option><option value="week">Weekly</option><option value="month">Monthly</option></select></label>`+
+    `<button id="f-reset" title="Reset to full date range, all personas, daily view">Reset</button>`;
   document.querySelector('.topbar').insertBefore(bar,scopeToggle||$('#scopeBar'));
   $('#f-from').onchange=e=>{ FILTERS.from=e.target.value||null;
     const to=$('#f-to'); if(to.value&&e.target.value&&to.value<e.target.value){to.value=e.target.value;FILTERS.to=to.value;} recompute(); };
   $('#f-to').onchange=e=>{ FILTERS.to=e.target.value||null;
     const fr=$('#f-from'); if(fr.value&&e.target.value&&e.target.value<fr.value){fr.value=e.target.value;FILTERS.from=fr.value;} recompute(); };
   $('#f-persona').onchange=e=>{ FILTERS.persona=e.target.value; recompute(); };
+  $('#f-gran').onchange=e=>{ FILTERS.gran=e.target.value||'day'; recompute(); };
   $('#f-reset').onclick=()=>{ const raw=currentRaw();
-    FILTERS.persona=''; FILTERS.from=raw.meta.date_min; FILTERS.to=todayIST();
+    FILTERS.persona=''; FILTERS.from=raw.meta.date_min; FILTERS.to=todayIST(); FILTERS.gran='day';
     initFilterControls(); recompute(); };
   // defaults: start = beginning of the data, end = now
   FILTERS.from=currentRaw().meta.date_min; FILTERS.to=todayIST();
@@ -372,6 +382,7 @@ function initFilterControls(){
   if(FILTERS.persona && !opts.some(([p])=>p===FILTERS.persona)) FILTERS.persona='';
   sel.innerHTML=`<option value="">All personas</option>`+
     opts.map(([p,c])=>`<option value="${esc(p)}"${FILTERS.persona===p?' selected':''}>${esc(personaLabel(p))} (${c})</option>`).join('');
+  $('#f-gran').value=FILTERS.gran||'day';
 }
 
 // ---- scope toggle: External (default) <-> All users (incl. internal, lazy-loaded)
@@ -453,12 +464,12 @@ RENDER.overview=()=>{
      ${kpi('👎 Dislikes',' N/A',' not in dataset','na')}
    </div>
    <div class="grid g3">
-     <div class="card span1"><h3>Turns per day</h3><p class="desc">Daily activity volume (IST)</p><div class="chart-wrap short"><canvas id="ov-daily"></canvas></div></div>
+     <div class="card span1"><h3>Turns per ${granNoun()}</h3><p class="desc">${granAdj()} activity volume (IST)</p><div class="chart-wrap short"><canvas id="ov-daily"></canvas></div></div>
      <div class="card span1"><h3>Query intents</h3><p class="desc">What users come to Kyro for</p><div class="chart-wrap short"><canvas id="ov-intent"></canvas></div></div>
      <div class="card span1"><h3>Turn outcomes</h3><p class="desc">How turns resolved</p><div class="chart-wrap short"><canvas id="ov-outcome"></canvas></div></div>
    </div>`);
   const dl=D.activity.daily;
-  bar('ov-daily',dl.map(d=>dmonth(d.date)),dl.map(d=>d.turns),{color:PAL[0]});
+  bar('ov-daily',dl.map(d=>fmtPeriod(d.date)),dl.map(d=>d.turns),{color:PAL[0]});
   doughnut('ov-intent',D.queries.intents.map(i=>i.intent),D.queries.intents.map(i=>i.count));
   const oc=D.outcomes.by_outcome, ocol={done:'#34d399',cancelled:'#fbbf24',errored:'#f87171'};
   doughnut('ov-outcome',oc.map(o=>o.outcome),oc.map(o=>o.count),{colors:oc.map(o=>ocol[o.outcome]||PAL[3])});
@@ -468,16 +479,16 @@ RENDER.activity=()=>{
   const dl=D.activity.daily;
   H('activity',`
    <div class="grid g2">
-     <div class="card"><h3>Turns & conversations started per day</h3><p class="desc">Daily volume (IST). Bars = turns, line = new conversations.</p><div class="chart-wrap"><canvas id="ac-daily"></canvas></div></div>
-     <div class="card"><h3>Daily active users</h3><p class="desc">Distinct active users per day</p><div class="chart-wrap"><canvas id="ac-dau"></canvas></div></div>
+     <div class="card"><h3>Turns & conversations started per ${granNoun()}</h3><p class="desc">${granAdj()} volume (IST). Bars = turns, line = new conversations.</p><div class="chart-wrap"><canvas id="ac-daily"></canvas></div></div>
+     <div class="card"><h3>${granAdj()} active users</h3><p class="desc">Distinct active users per ${granNoun()}</p><div class="chart-wrap"><canvas id="ac-dau"></canvas></div></div>
      <div class="card"><h3>Activity by hour of day (IST)</h3><p class="desc">When users engage Kyro — aligned to market hours</p><div class="chart-wrap"><canvas id="ac-hour"></canvas></div></div>
      <div class="card"><h3>Activity by day of week</h3><p class="desc">Weekday distribution of turns</p><div class="chart-wrap"><canvas id="ac-dow"></canvas></div></div>
    </div>`);
-  chart('ac-daily',{data:{labels:dl.map(d=>dmonth(d.date)),datasets:[
+  chart('ac-daily',{data:{labels:dl.map(d=>fmtPeriod(d.date)),datasets:[
       {type:'bar',label:'Turns',data:dl.map(d=>d.turns),backgroundColor:PAL[0],borderRadius:5,order:2,maxBarThickness:50},
       {type:'line',label:'Conversations started',data:dl.map(d=>d.threads_started),borderColor:PAL[3],backgroundColor:PAL[3],tension:.3,borderWidth:2,pointRadius:3,order:1}
     ]},options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{position:'top'}},scales:{x:{grid:GRID},y:{beginAtZero:true,grid:GRID}}}});
-  bar('ac-dau',dl.map(d=>dmonth(d.date)),dl.map(d=>d.dau),{color:PAL[4]});
+  bar('ac-dau',dl.map(d=>fmtPeriod(d.date)),dl.map(d=>d.dau),{color:PAL[4]});
   const h=D.activity.hourly;
   bar('ac-hour',h.map(x=>String(x.hour).padStart(2,'0')),h.map(x=>x.count),{color:PAL[1]});
   const dw=D.activity.dow;
@@ -502,15 +513,15 @@ RENDER.engagement=()=>{
    </div>
    <div class="grid g2" style="margin-bottom:16px">
      <div class="card"><h3>Turns by market slot (IST)</h3><p class="desc">Pre-market 12:00am–9:15 · During 9:15–3:30 · Post-market 3:30–12:00am · Weekend = Sat/Sun (all day)</p><div class="chart-wrap"><canvas id="en-slot"></canvas></div></div>
-     <div class="card"><h3>Retention — DAU/WAU stickiness</h3><p class="desc">Daily active users ÷ trailing-7-day active users (higher = users return more often)</p><div class="chart-wrap"><canvas id="en-stick"></canvas></div></div>
+     <div class="card"><h3>Retention — DAU/WAU stickiness</h3><p class="desc">Daily active users ÷ trailing-7-day active users (higher = users return more often)${FILTERS.gran!=='day'?` — shown as the ${granNoun()}ly average of daily values`:''}</p><div class="chart-wrap"><canvas id="en-stick"></canvas></div></div>
    </div>
    <div class="grid g2" style="margin-bottom:16px">
-     <div class="card"><h3>Daily active users — new vs returning</h3><p class="desc"><b>New</b> = user's first-ever active day; <b>returning</b> = seen before</p><div class="chart-wrap"><canvas id="en-dau"></canvas></div></div>
+     <div class="card"><h3>${granAdj()} active users — new vs returning</h3><p class="desc"><b>New</b> = user's first-ever active ${granNoun()}; <b>returning</b> = seen before</p><div class="chart-wrap"><canvas id="en-dau"></canvas></div></div>
      <div class="card"><h3>Weekly active users — new vs returning</h3><p class="desc">ISO weeks (label = week-start Mon). New = user's first active week</p><div class="chart-wrap"><canvas id="en-wau"></canvas></div></div>
    </div>
    <div class="grid g2" style="margin-bottom:16px">
-     <div class="card"><h3>Turns per user / day</h3><p class="desc">Turns that day ÷ users active that day (engagement depth per active user)</p><div class="chart-wrap"><canvas id="en-tpu"></canvas></div></div>
-     <div class="card"><h3>New threads per active user / day</h3><p class="desc">New conversations started ÷ DAU that day</p><div class="chart-wrap"><canvas id="en-ntr"></canvas></div></div>
+     <div class="card"><h3>Turns per user / ${granNoun()}</h3><p class="desc">Turns in the ${granNoun()} ÷ users active in it (engagement depth per active user)</p><div class="chart-wrap"><canvas id="en-tpu"></canvas></div></div>
+     <div class="card"><h3>New threads per active user / ${granNoun()}</h3><p class="desc">New conversations started ÷ distinct active users, per ${granNoun()}</p><div class="chart-wrap"><canvas id="en-ntr"></canvas></div></div>
    </div>
    <div class="grid g2">
      <div class="card"><h3>M1 monthly cohort retention</h3><p class="desc">Of users first seen in a month, % active again the next month</p>
@@ -519,9 +530,9 @@ RENDER.engagement=()=>{
        </tbody></table></div></div>
    </div>`);
   bar('en-slot',E.day_slots.map(s=>s.slot),E.day_slots.map(s=>s.count),{colors:E.day_slots.map((_,i)=>PAL[i%PAL.length])});
-  lineChart('en-stick',E.stickiness.map(x=>dmonth(x.date)),[{label:'DAU/WAU %',data:E.stickiness.map(x=>x.stickiness),color:PAL[1],fill:true}],{fmtv:v=>v+'%'});
-  lineChart('en-tpu',(E.turns_per_user_daily||[]).map(x=>dmonth(x.date)),[{label:'Turns / user',data:(E.turns_per_user_daily||[]).map(x=>x.rate),color:PAL[4],fill:true}],{fmtv:v=>(+v).toFixed(2)});
-  chart('en-dau',{type:'bar',data:{labels:E.dau_split.map(d=>dmonth(d.date)),datasets:[
+  lineChart('en-stick',E.stickiness.map(x=>fmtPeriod(x.date)),[{label:'DAU/WAU %',data:E.stickiness.map(x=>x.stickiness),color:PAL[1],fill:true}],{fmtv:v=>v+'%'});
+  lineChart('en-tpu',(E.turns_per_user_daily||[]).map(x=>fmtPeriod(x.date)),[{label:'Turns / user',data:(E.turns_per_user_daily||[]).map(x=>x.rate),color:PAL[4],fill:true}],{fmtv:v=>(+v).toFixed(2)});
+  chart('en-dau',{type:'bar',data:{labels:E.dau_split.map(d=>fmtPeriod(d.date)),datasets:[
      {label:'Returning',data:E.dau_split.map(d=>d.existing),backgroundColor:PAL[0],stack:'s'},
      {label:'New',data:E.dau_split.map(d=>d.new),backgroundColor:PAL[3],stack:'s'}]},
    options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{position:'top'}},scales:{x:{stacked:true,grid:GRID},y:{stacked:true,beginAtZero:true,grid:GRID}}}});
@@ -529,7 +540,7 @@ RENDER.engagement=()=>{
      {label:'Returning',data:E.wau_split.map(d=>d.existing),backgroundColor:PAL[0],stack:'s'},
      {label:'New',data:E.wau_split.map(d=>d.new),backgroundColor:PAL[3],stack:'s'}]},
    options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{position:'top'}},scales:{x:{stacked:true,grid:GRID},y:{stacked:true,beginAtZero:true,grid:GRID}}}});
-  bar('en-ntr',E.new_thread_rate.map(x=>dmonth(x.date)),E.new_thread_rate.map(x=>x.rate),{color:PAL[5],fmtv:v=>(+v).toFixed(2)});
+  bar('en-ntr',E.new_thread_rate.map(x=>fmtPeriod(x.date)),E.new_thread_rate.map(x=>x.rate),{color:PAL[5],fmtv:v=>(+v).toFixed(2)});
 };
 
 RENDER.users=()=>{
@@ -956,11 +967,11 @@ RENDER.tokens=()=>{
    </div>`:''}
    <div class="grid g2" style="margin-bottom:16px">
      <div class="card"><h3>Cost breakdown</h3><p class="desc">Where the dollars go — note cached input is ~9% the price of fresh</p><div class="chart-wrap"><canvas id="tk-cost"></canvas></div></div>
-     <div class="card"><h3>Estimated cost per day</h3><p class="desc">Daily spend (IST)</p><div class="chart-wrap"><canvas id="tk-costday"></canvas></div></div>
+     <div class="card"><h3>Estimated cost per ${granNoun()}</h3><p class="desc">${granAdj()} spend (IST)</p><div class="chart-wrap"><canvas id="tk-costday"></canvas></div></div>
    </div>
    <div class="grid g2" style="margin-bottom:16px">
      <div class="card"><h3>Token composition</h3><p class="desc">Where the tokens go. Heavy <b>input + cache reads</b> reflect large system prompt + tool results re-fed each step.</p><div class="chart-wrap tall"><canvas id="tk-comp"></canvas></div></div>
-     <div class="card"><h3>Tokens per day</h3><p class="desc">Daily consumption (stacked, IST)</p><div class="chart-wrap tall"><canvas id="tk-day"></canvas></div></div>
+     <div class="card"><h3>Tokens per ${granNoun()}</h3><p class="desc">${granAdj()} consumption (stacked, IST)</p><div class="chart-wrap tall"><canvas id="tk-day"></canvas></div></div>
    </div>
    <div class="grid g2">
      <div class="card"><h3>Tokens per turn</h3><p class="desc">Distribution of per-turn token weight (input+output)</p><div class="chart-wrap"><canvas id="tk-ptt"></canvas></div></div>
@@ -977,7 +988,7 @@ RENDER.tokens=()=>{
    </div>`);
   doughnut('tk-comp',['Input (fresh)','Cache reads','Output','Reasoning'],[T.input-T.cache_read>0?T.input-T.cache_read:T.input,T.cache_read,T.output,T.reasoning],{colors:[PAL[8],PAL[1],PAL[3],PAL[4]],fmtv:fmtTok});
   const pd=t.per_day;
-  chart('tk-day',{type:'bar',data:{labels:pd.map(d=>dmonth(d.date)),datasets:[
+  chart('tk-day',{type:'bar',data:{labels:pd.map(d=>fmtPeriod(d.date)),datasets:[
       {label:'Cache reads',data:pd.map(d=>d.cache_read),backgroundColor:PAL[1],stack:'s'},
       {label:'Input (fresh)',data:pd.map(d=>Math.max(0,d.input-d.cache_read)),backgroundColor:PAL[8],stack:'s'},
       {label:'Output',data:pd.map(d=>d.output),backgroundColor:PAL[3],stack:'s'},
@@ -988,7 +999,7 @@ RENDER.tokens=()=>{
   chart('tk-cache',{type:'doughnut',data:{labels:['Served from cache','Fresh input'],datasets:[{data:[T.cache_read,Math.max(0,T.input-T.cache_read)],backgroundColor:[PAL[0],PAL[9]],borderColor:'#151d36',borderWidth:2}]},
     options:{responsive:true,maintainAspectRatio:false,cutout:'70%',plugins:{legend:{position:'bottom'},tooltip:{callbacks:{label:x=>' '+x.label+': '+fmtTok(x.parsed)}}}}});
   doughnut('tk-cost',['Fresh input','Cached input','Output'],[c.input,c.cached,c.output],{colors:[PAL[8],PAL[1],PAL[3]],fmtv:fmtUSD});
-  bar('tk-costday',pd.map(d=>dmonth(d.date)),pd.map(d=>+((Math.max(0,d.input-d.cache_read)*c.rates.input + d.cache_read*c.rates.cached_input + (d.output+d.reasoning)*c.rates.output)/1e6).toFixed(4)),{color:PAL[5],fmtv:fmtUSD});
+  bar('tk-costday',pd.map(d=>fmtPeriod(d.date)),pd.map(d=>+((Math.max(0,d.input-d.cache_read)*c.rates.input + d.cache_read*c.rates.cached_input + (d.output+d.reasoning)*c.rates.output)/1e6).toFixed(4)),{color:PAL[5],fmtv:fmtUSD});
   if(sc){
     const cm=sc.cost_per_user_per_month;
     const pts=[sc.current_users,1000,5000,10000,15000,20000,sc.target_users]
@@ -1068,7 +1079,7 @@ RENDER.quality=()=>{
    </div>
    <div class="grid g2" style="margin-bottom:16px">
      <div class="card"><h3>Flagged turns by dimension (Tier A)</h3><p class="desc">Confirmed defects grouped by evaluation dimension</p><div class="chart-wrap tall"><canvas id="ql-dim"></canvas></div></div>
-     <div class="card"><h3>Quality trend (IST)</h3><p class="desc">Line = % of that day's turns clean — hover for raw counts · watch this rise as fixes ship</p><div class="chart-wrap tall"><canvas id="ql-trend"></canvas></div></div>
+     <div class="card"><h3>Quality trend (IST)</h3><p class="desc">Line = % of that ${granNoun()}'s turns clean — hover for raw counts · watch this rise as fixes ship</p><div class="chart-wrap tall"><canvas id="ql-trend"></canvas></div></div>
    </div>
    <div class="card" style="margin-bottom:16px"><h3>Rules firing</h3><p class="desc">Every automated check · count = turns where it fired · % of ${fmt(Q.total_turns)} turns · hover a rule for its internal code</p>
      <div class="scroll"><table><thead><tr><th>Rule</th><th>Tier</th><th>Severity</th><th>Dimension</th><th class="num">Turns</th><th class="num">%</th></tr></thead><tbody>
@@ -1091,7 +1102,7 @@ RENDER.quality=()=>{
   bar('ql-dim',Q.by_dimension.map(d=>d.dimension),Q.by_dimension.map(d=>d.count),{horizontal:true,colors:Q.by_dimension.map((_,i)=>PAL[i%PAL.length])});
   if(Q.by_dimension_tierB.length) bar('ql-dimb',Q.by_dimension_tierB.map(d=>d.dimension),Q.by_dimension_tierB.map(d=>d.count),{horizontal:true,color:PAL[1]});
   const bd=Q.by_day;
-  chart('ql-trend',{type:'line',data:{labels:bd.map(d=>dmonth(d.date)),datasets:[
+  chart('ql-trend',{type:'line',data:{labels:bd.map(d=>fmtPeriod(d.date)),datasets:[
      {label:'Clean % of turns',data:bd.map(d=>d.turns?+((d.turns-d.flagged)/d.turns*100).toFixed(1):0),borderColor:PAL[0],backgroundColor:'rgba(54,211,153,.12)',fill:true,tension:.3,borderWidth:2,pointRadius:2,pointHoverRadius:4}
    ]},options:{responsive:true,maintainAspectRatio:false,interaction:{mode:'index',intersect:false},
      plugins:{legend:{position:'top'},tooltip:{callbacks:{label:c=>{const d=bd[c.dataIndex];return ` ${c.parsed.y}% clean · ${d.turns-d.flagged} of ${d.turns} turns`;}}}},

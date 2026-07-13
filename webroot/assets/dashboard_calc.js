@@ -137,8 +137,14 @@ const LAT_LABELS = ['0-2s', '2-5s', '5-10s', '10-20s', '20-30s', '30-60s', '60s+
 //           new/returning splits, trailing-7d stickiness, M1 cohorts, thread
 //           start dates — are computed from history, then only rows inside the
 //           selected range are emitted. Omitting it falls back to turns.
-function buildData(raw, turnsIn, historyIn) {
+// granularity — 'day' (default) | 'week' | 'month': the bucket size for the
+//           time-series outputs (activity, tokens/day, quality trend, DAU
+//           split, new-thread rate, turns/user). Distinct-user counts are
+//           recomputed per bucket (a week's "dau" = that week's WAU), not
+//           summed from days. KPIs and internal math stay day-based.
+function buildData(raw, turnsIn, historyIn, granularity) {
   const history = historyIn || turnsIn;
+  const GRAN = (granularity === 'week' || granularity === 'month') ? granularity : 'day';
   const identMap = raw.ident || {};
   const CLIENT_TOOLS = new Set(raw.client_tools || []);
   const PRICING = raw.pricing || { model: '?', input_per_m: 0, cached_input_per_m: 0, output_per_m: 0 };
@@ -196,6 +202,43 @@ function buildData(raw, turnsIn, historyIn) {
              dau: Dd.users.size, tokens: Dd.tokens, input: Dd.input, output: Dd.output,
              cache_read: Dd.cache_read, cache_write: Dd.cache_write,
              reasoning: Dd.reasoning, tool_calls: Dd.tool_calls };
+  });
+
+  // ---------- granularity buckets (day/week/month) for the time-series outputs
+  // Maps an IST day string to its bucket key: itself / its ISO-week Monday /
+  // its 'YYYY-MM' month. Distinct users are unioned per bucket, numerics summed.
+  const bucketOfDay = day => {
+    if (GRAN === 'week') {
+      const e = Date.parse(day + 'T00:00:00Z');
+      const dn = (new Date(e).getUTCDay() + 6) % 7;
+      return new Date(e - dn * 86400000).toISOString().slice(0, 10);
+    }
+    if (GRAN === 'month') return day.slice(0, 7);
+    return day;
+  };
+  const bucketAgg = new Map();
+  for (const day of sortedDays) {
+    const b = bucketOfDay(day), Dd = daily.get(day);
+    let B = bucketAgg.get(b);
+    if (!B) {
+      B = { turns: 0, users: new Set(), tokens: 0, input: 0, output: 0, cache_read: 0,
+            cache_write: 0, reasoning: 0, tool_calls: 0, threads_started: 0, days: 0 };
+      bucketAgg.set(b, B);
+    }
+    B.turns += Dd.turns; for (const u of Dd.users) B.users.add(u);
+    B.tokens += Dd.tokens; B.input += Dd.input; B.output += Dd.output;
+    B.cache_read += Dd.cache_read; B.cache_write += Dd.cache_write; B.reasoning += Dd.reasoning;
+    B.tool_calls += Dd.tool_calls; B.threads_started += threadsStartedByDay.get(day) || 0;
+    B.days++;
+  }
+  const sortedBuckets = [...bucketAgg.keys()].sort();
+  // Same shape as dailySeries; identical to it at GRAN==='day'.
+  const periodSeries = sortedBuckets.map(b => {
+    const B = bucketAgg.get(b);
+    return { date: b, turns: B.turns, threads_started: B.threads_started,
+             dau: B.users.size, tokens: B.tokens, input: B.input, output: B.output,
+             cache_read: B.cache_read, cache_write: B.cache_write,
+             reasoning: B.reasoning, tool_calls: B.tool_calls };
   });
 
   // ---------- per-user
@@ -455,7 +498,11 @@ function buildData(raw, turnsIn, historyIn) {
     by_dimension_tierB: qDimB.mostCommon().map(([dimension, count]) => ({ dimension, count })),
     by_rule: qRule.mostCommon().map(([rule, count]) => ({ rule, count, ...qRuleMeta[rule] })),
     by_user: qbUser,
-    by_day: dailySeries.map(d => ({ date: d.date, flagged: perDayFlags.get(d.date) || 0, turns: d.turns })),
+    by_day: (() => {
+      const perBucketFlags = new Counter();
+      for (const [day, n] of perDayFlags) perBucketFlags.add(bucketOfDay(day), n);
+      return periodSeries.map(d => ({ date: d.date, flagged: perBucketFlags.get(d.date) || 0, turns: d.turns }));
+    })(),
   };
 
   // ---------- engagement / retention / projection
@@ -500,11 +547,12 @@ function buildData(raw, turnsIn, historyIn) {
     rangeMonths.add(P.month);
   }
 
-  const dauSplit = sortedDays.map(day => {
-    const uu = daily.get(day).users;
+  // "New" = user's first-ever activity (from history) falls inside this bucket.
+  const dauSplit = sortedBuckets.map(b => {
+    const uu = bucketAgg.get(b).users;
     let nw = 0;
-    for (const u of uu) if (userFirstDay.get(u) === day) nw++;
-    return { date: day, new: nw, existing: uu.size - nw, dau: uu.size };
+    for (const u of uu) if (bucketOfDay(userFirstDay.get(u)) === b) nw++;
+    return { date: b, new: nw, existing: uu.size - nw, dau: uu.size };
   });
 
   // Weeks are rendered only if the selected range touches them, but each WAU
@@ -524,7 +572,7 @@ function buildData(raw, turnsIn, historyIn) {
   const histDays = [...histDayUsers.keys()].sort();
   const histEpoch = histDays.map(d => Date.parse(d + 'T00:00:00Z') / 86400000);
   const dayEpoch = sortedDays.map(d => Date.parse(d + 'T00:00:00Z') / 86400000);
-  const stickiness = sortedDays.map((day, i) => {
+  const stickDaily = sortedDays.map((day, i) => {
     const win = new Set();
     for (let j = histDays.length - 1; j >= 0; j--) {
       const diff = dayEpoch[i] - histEpoch[j];
@@ -535,13 +583,25 @@ function buildData(raw, turnsIn, historyIn) {
     const dau = daily.get(day).users.size;
     return { date: day, stickiness: win.size ? r1(dau / win.size * 100) : 0 };
   });
-  const stickinessAvg = stickiness.length ? r1(sum(stickiness.map(s => s.stickiness)) / stickiness.length) : 0;
-
-  const newThreadRate = sortedDays.map(day => {
-    const dau = daily.get(day).users.size, nt = threadsStartedByDay.get(day) || 0;
-    return { date: day, rate: dau ? r2(nt / dau) : 0, threads: nt, dau };
+  // Stickiness is inherently a daily ratio — at week/month granularity each
+  // bucket shows the mean of its days. The KPI average stays day-based so it
+  // doesn't move when only the granularity changes.
+  const stickiness = GRAN === 'day' ? stickDaily : sortedBuckets.map(b => {
+    const vals = stickDaily.filter(s => bucketOfDay(s.date) === b).map(s => s.stickiness);
+    return { date: b, stickiness: vals.length ? r1(sum(vals) / vals.length) : 0 };
   });
-  const newThreadRateAvg = newThreadRate.length ? r2(sum(newThreadRate.map(x => x.rate)) / newThreadRate.length) : 0;
+  const stickinessAvg = stickDaily.length ? r1(sum(stickDaily.map(s => s.stickiness)) / stickDaily.length) : 0;
+
+  const newThreadRate = sortedBuckets.map(b => {
+    const B = bucketAgg.get(b);
+    return { date: b, rate: B.users.size ? r2(B.threads_started / B.users.size) : 0,
+             threads: B.threads_started, dau: B.users.size };
+  });
+  // KPI average stays day-based regardless of the render granularity.
+  const newThreadRateAvg = sortedDays.length ? r2(sum(sortedDays.map(day => {
+    const dau = daily.get(day).users.size, nt = threadsStartedByDay.get(day) || 0;
+    return dau ? nt / dau : 0;
+  })) / sortedDays.length) : 0;
 
   const nDaysE = daily.size || 1;
   let totalUserActiveDays = 0;
@@ -550,10 +610,10 @@ function buildData(raw, turnsIn, historyIn) {
   const avgTurnsPerDay = r1(turns.length / nDaysE);
   const avgTurnsPerUserPerDay = r2(turns.length / totalUserActiveDays);
 
-  // Daily engagement depth — turns that day ÷ users active that day
-  const turnsPerUserDaily = sortedDays.map(day => {
-    const Dd = daily.get(day);
-    return { date: day, rate: Dd.users.size ? r2(Dd.turns / Dd.users.size) : 0, turns: Dd.turns, dau: Dd.users.size };
+  // Engagement depth per bucket — turns in the period ÷ distinct users active in it
+  const turnsPerUserDaily = sortedBuckets.map(b => {
+    const B = bucketAgg.get(b);
+    return { date: b, rate: B.users.size ? r2(B.turns / B.users.size) : 0, turns: B.turns, dau: B.users.size };
   });
 
   // M1 monthly cohort retention — cohorts and next-month activity come from
@@ -669,6 +729,7 @@ function buildData(raw, turnsIn, historyIn) {
       date_min: sortedDays[0] || null,
       date_max: sortedDays[sortedDays.length - 1] || null,
       n_days: sortedDays.length,
+      granularity: GRAN,
     },
     kpis: {
       conversations: threads.size,
@@ -687,7 +748,7 @@ function buildData(raw, turnsIn, historyIn) {
       dislikes: null,
     },
     activity: {
-      daily: dailySeries,
+      daily: periodSeries,
       hourly: Array.from({ length: 24 }, (_, h) => ({ hour: h, count: hourly.get(h) || 0 })),
       dow: DOW_NAMES.map((day, i) => ({ day, count: dow.get(i) || 0 })),
     },
@@ -749,8 +810,8 @@ function buildData(raw, turnsIn, historyIn) {
     },
     tokens: {
       totals: tokTotals,
-      per_day: dailySeries.map(d => ({ date: d.date, input: d.input, output: d.output,
-                                       cache_read: d.cache_read, reasoning: d.reasoning })),
+      per_day: periodSeries.map(d => ({ date: d.date, input: d.input, output: d.output,
+                                        cache_read: d.cache_read, reasoning: d.reasoning })),
       per_turn_hist: tokenHist,
       per_turn_stats: stats(perTurnTokens),
       cache_hit_ratio: cacheHitRatio,
