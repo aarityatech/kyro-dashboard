@@ -35,7 +35,7 @@
   .scopetoggle button{background:transparent;border:none;color:var(--muted);padding:7px 11px;font-size:11.5px;font-weight:700;cursor:pointer;white-space:nowrap}
   .scopetoggle button.on{background:var(--card2);color:var(--txt)}
   .scopetoggle button:hover{color:var(--txt)}
-  .scopetoggle button:first-child{border-right:1px solid var(--line)}
+  .scopetoggle button:not(:last-child){border-right:1px solid var(--line)}
   .dlbtn{margin-left:14px;display:flex;align-items:center;gap:6px;border:1px solid var(--line);border-radius:9px;background:transparent;color:var(--muted);padding:7px 12px;font-size:11.5px;font-weight:700;cursor:pointer;white-space:nowrap}
   .dlbtn:hover{color:var(--txt);border-color:var(--txt)}
   .dlbtn:disabled{opacity:.5;cursor:default}
@@ -227,6 +227,8 @@ function applyChrome(){
   const freshCol = ageMin==null ? 'var(--muted)' : (ageMin>75 ? 'var(--bad)' : 'var(--good)');
   const scopeTxt = m.scope==='all'
     ? `Users: <b>${m.users_with_data}</b> (incl. internal)`
+    : m.scope==='internal'
+    ? `Users: <b>${m.users_with_data}</b> internal only`
     : `Users: <b>${m.users_with_data}</b> external${m.internal_users_excluded?` · <b>${m.internal_users_excluded}</b> internal hidden`:''}`;
   const filt=[];
   if(FILTERS.persona) filt.push(`persona: ${esc(personaLabel(FILTERS.persona))}`);
@@ -240,7 +242,7 @@ function applyChrome(){
     `<div>${m.date_min||'—'} → ${m.date_max||'—'} <b>(${m.n_days}d)</b></div>`+
     `<div>${m.timezone}</div>`+
     (filt.length?`<div><span class="filterchip">⧩ filtered — ${filt.join(' · ')}</span></div>`:'');
-  $('#footer').innerHTML=`Data as of <b>${m.generated_at||'—'}</b> · ${m.scope==='all'?('all '+m.users_with_data+' users incl. internal'):('external users only — '+(m.internal_users_excluded||0)+' internal excluded')} · ${m.filtered_turns} turns${filt.length?' (filters active: '+filt.join(', ')+')':''} · generated from ${fmt(m.total_turn_files)} archived turn files · all timestamps ${m.timezone}. Re-run <code>refresh.sh</code> to update.`;
+  $('#footer').innerHTML=`Data as of <b>${m.generated_at||'—'}</b> · ${m.scope==='all'?('all '+m.users_with_data+' users incl. internal'):m.scope==='internal'?('internal users only — '+m.users_with_data+' users'):('external users only — '+(m.internal_users_excluded||0)+' internal excluded')} · ${m.filtered_turns} turns${filt.length?' (filters active: '+filt.join(', ')+')':''} · generated from ${fmt(m.total_turn_files)} archived turn files · all timestamps ${m.timezone}. Re-run <code>refresh.sh</code> to update.`;
 }
 
 const tabsEl=$('#tabs'), mainEl=$('#main');
@@ -262,6 +264,24 @@ function activate(id){
 function H(id,html){ document.getElementById('panel-'+id).innerHTML=html; }
 function kpi(label,val,foot,cls=''){return `<div class="kpi ${cls}"><div class="bar"></div><div class="label">${label}</div><div class="val">${val}</div>${foot?`<div class="foot">${foot}</div>`:''}</div>`;}
 function legend(items){return `<div class="legend">${items.map((x,i)=>`<span><span class="dot" style="background:${x.c||PAL[i]}"></span>${x.t}</span>`).join('')}</div>`;}
+
+// Sun–Sat weekly cohort retention heatmap (Engagement tab)
+function retentionMatrixCard(RW){
+  if(!RW||!RW.matrix||!RW.matrix.length) return '';
+  const wkRange=w=>dmonth(w)+' – '+dmonth(new Date(Date.parse(w+'T00:00:00Z')+6*86400000).toISOString().slice(0,10));
+  const head=RW.weeks.map(w=>`<th class="num" title="week of ${wkRange(w)}">${dmonth(w)}</th>`).join('');
+  const rows=RW.matrix.map(r=>{
+    const cells=r.cells.map(c=>{
+      if(c==null) return '<td class="num" style="color:var(--muted2)">–</td>';
+      const pct=r.size?c/r.size*100:0;
+      return `<td class="num" style="background:rgba(54,211,153,${(pct/100*.45).toFixed(3)})">${c} <span style="color:var(--muted);font-size:10.5px">${Math.round(pct)}%</span></td>`;
+    }).join('');
+    return `<tr><td style="white-space:nowrap"><b>${wkRange(r.week)}</b></td><td class="num">${r.size}</td>${cells}</tr>`;
+  }).join('');
+  return `<div class="card" style="margin-top:16px"><h3>Weekly retention cohorts (Sun–Sat)</h3>
+    <p class="desc">Each row = users whose <b>first message</b> fell in that week (cohort); each cell = how many of them sent a message in the column's week (count · % of cohort). Weeks run Sunday–Saturday, IST. Cohorts are computed over full history, so the date filter never relabels a user's first week.</p>
+    <div class="scroll" style="max-height:340px"><table><thead><tr><th>Cohort week</th><th class="num">Users</th>${head}</tr></thead><tbody>${rows}</tbody></table></div></div>`;
+}
 
 // shared turn-transcript renderer (used by Queries + Quality tabs)
 const tItem=it=>{
@@ -307,7 +327,28 @@ const IST_OFF=19800000;
 const todayIST=()=>new Date(Date.now()+IST_OFF).toISOString().slice(0,10);
 const istDayStartMs=d=>Date.parse(d+'T00:00:00Z')-IST_OFF;
 const istDayEndMs=d=>istDayStartMs(d)+86399999;
-function currentRaw(){ return curScope==='all' ? window.DASHBOARD_DATA_ALL : window.DASHBOARD_DATA; }
+function currentRaw(){
+  if(curScope==='all') return window.DASHBOARD_DATA_ALL;
+  if(curScope==='internal') return window.DASHBOARD_DATA_INTERNAL;
+  return window.DASHBOARD_DATA;
+}
+// Internal-only payload, derived once from the all-users file: internal users
+// are exactly those present in ALL but absent from the external payload (the
+// build excludes internal users from dashboard_data.js entirely).
+function buildInternalRaw(){
+  if(window.DASHBOARD_DATA_INTERNAL || !window.DASHBOARD_DATA_ALL) return;
+  const all=window.DASHBOARD_DATA_ALL;
+  const ext=new Set(window.DASHBOARD_DATA.turns.map(t=>t.user_id));
+  const turns=all.turns.filter(t=>!ext.has(t.user_id));
+  const uids=new Set(turns.map(t=>t.user_id));
+  const days=[...new Set(turns.filter(t=>t.ts_ms).map(t=>window.KyroCalc.istParts(t.ts_ms).day))].sort();
+  const ident={}; for(const u of uids) if(all.ident[u]) ident[u]=all.ident[u];
+  window.DASHBOARD_DATA_INTERNAL={
+    meta:{...all.meta, scope:'internal',
+      internal_users_included:uids.size, internal_turns_included:turns.length,
+      date_min:days[0]||null, date_max:days[days.length-1]||null},
+    pricing:all.pricing, client_tools:all.client_tools, ident, turns};
+}
 function personaOf(raw,uid){ return ((raw.ident[uid]||{}).persona)||'unclassified'; }
 function filtersNarrowDates(){
   const raw=currentRaw();
@@ -385,12 +426,14 @@ function initFilterControls(){
   $('#f-gran').value=FILTERS.gran||'day';
 }
 
-// ---- scope toggle: External (default) <-> All users (incl. internal, lazy-loaded)
+// ---- scope toggle: External (default) / Internal only / All — the latter two
+// need the all-users file, lazy-loaded on first use.
 function buildScopeToggle(){
   if(!(RAW.meta&&RAW.meta.has_all_scope)) return;   // only the external file advertises the toggle
   scopeToggle=document.createElement('div'); scopeToggle.className='scopetoggle';
   scopeToggle.innerHTML=`<button data-s="external" class="on" title="External users only">External</button>`+
-    `<button data-s="all" title="Include internal users (loads a large data file on first use)">All + internal</button>`;
+    `<button data-s="internal" title="Internal (company) users only (loads a large data file on first use)">Internal</button>`+
+    `<button data-s="all" title="Everyone — external + internal (loads a large data file on first use)">All</button>`;
   document.querySelector('.topbar').insertBefore(scopeToggle,$('#scopeBar'));
   scopeToggle.querySelectorAll('button').forEach(b=>b.onclick=()=>setScope(b.dataset.s));
 }
@@ -404,6 +447,14 @@ function saveBlob(name, text){
   setTimeout(()=>URL.revokeObjectURL(url),1000);
 }
 async function downloadData(){
+  if(curScope==='internal'){
+    // derived client-side — no on-disk file to fetch, reconstruct from memory
+    const obj=window.DASHBOARD_DATA_INTERNAL;
+    if(!obj){ alert('Data for this scope is not loaded yet.'); return; }
+    saveBlob('dashboard_data_internal.js',
+      '// Derived in-browser from dashboard_data_all.js (internal users only).\nwindow.DASHBOARD_DATA_INTERNAL = '+JSON.stringify(obj)+';\n');
+    return;
+  }
   const all=curScope==='all';
   const file=all?'dashboard_data_all.js':'dashboard_data.js';
   const varname=all?'DASHBOARD_DATA_ALL':'DASHBOARD_DATA';
@@ -422,15 +473,16 @@ async function downloadData(){
 }
 function setScope(s){
   if(s===curScope || allLoading) return;
-  if(s==='all' && !window.DASHBOARD_DATA_ALL){
-    allLoading=true; setScopeButtons('all');
+  if((s==='all'||s==='internal') && !window.DASHBOARD_DATA_ALL){
+    allLoading=true; setScopeButtons(s);
     $('#scopeBar').innerHTML='<div><span class="dot" style="background:var(--warn)"></span> Loading all-users data…</div>';
     const sc=document.createElement('script'); sc.src='dashboard_data_all.js';
-    sc.onload=()=>{ allLoading=false; swapTo('all'); };
-    sc.onerror=()=>{ allLoading=false; setScopeButtons('external'); applyChrome();
+    sc.onload=()=>{ allLoading=false; buildInternalRaw(); swapTo(s); };
+    sc.onerror=()=>{ allLoading=false; setScopeButtons(curScope); applyChrome();
       alert('Could not load dashboard_data_all.js — run: python3 build_dashboard.py'); };
     document.head.appendChild(sc); return;
   }
+  if(s==='internal') buildInternalRaw();
   swapTo(s);
 }
 function swapTo(s){
@@ -452,7 +504,7 @@ RENDER.overview=()=>{
    <div class="grid g4" style="margin-bottom:16px">
      ${kpi('Conversations',fmt(k.conversations),'distinct threads')}
      ${kpi('Turns',fmt(k.turns),`${k.avg_turns_per_thread} avg / conversation`,'cy')}
-     ${kpi('Users analysed',fmt(k.users),m.scope==='all'?'incl. internal users':`external · ${m.internal_users_excluded} internal excluded`,'pp')}
+     ${kpi('Users analysed',fmt(k.users),m.scope==='all'?'incl. internal users':m.scope==='internal'?'internal users only':`external · ${m.internal_users_excluded} internal excluded`,'pp')}
      ${kpi('Daily active users',k.avg_dau,`peak ${k.peak_dau} · over ${m.n_days} days`,'pk')}
      ${kpi('Total tokens',fmtTok(k.total_tokens),`${D.tokens.cache_hit_ratio}% served from cache`)}
      ${kpi('Tool calls',fmt(k.total_tool_calls),`${D.tools.total_unique_tools} unique tools`,'cy')}
@@ -528,7 +580,8 @@ RENDER.engagement=()=>{
        <div class="scroll" style="max-height:300px"><table><thead><tr><th>Cohort month</th><th class="num">Users</th><th class="num">Retained M+1</th><th class="num">M1 %</th></tr></thead><tbody>
        ${E.m1.by_cohort.map(c=>`<tr><td>${esc(c.cohort)}</td><td class="num">${c.size}</td><td class="num">${c.m1_retained==null?'—':c.m1_retained}</td><td class="num">${c.m1_pct==null?'<span style="color:var(--muted2)">pending</span>':c.m1_pct+'%'}</td></tr>`).join('')}
        </tbody></table></div></div>
-   </div>`);
+   </div>
+   ${retentionMatrixCard(E.retention_weekly)}`);
   bar('en-slot',E.day_slots.map(s=>s.slot),E.day_slots.map(s=>s.count),{colors:E.day_slots.map((_,i)=>PAL[i%PAL.length])});
   lineChart('en-stick',E.stickiness.map(x=>fmtPeriod(x.date)),[{label:'DAU/WAU %',data:E.stickiness.map(x=>x.stickiness),color:PAL[1],fill:true}],{fmtv:v=>v+'%'});
   lineChart('en-tpu',(E.turns_per_user_daily||[]).map(x=>fmtPeriod(x.date)),[{label:'Turns / user',data:(E.turns_per_user_daily||[]).map(x=>x.rate),color:PAL[4],fill:true}],{fmtv:v=>(+v).toFixed(2)});
@@ -985,7 +1038,23 @@ RENDER.tokens=()=>{
        <p class="desc" style="margin-top:18px">Cache efficiency</p>
        <div class="chart-wrap short"><canvas id="tk-cache"></canvas></div>
      </div>
-   </div>`);
+   </div>
+   <div class="card" style="margin-top:16px"><h3>Token consumption by tool</h3>
+     <p class="desc"><b>Est. payload tokens</b> ≈ the tool's input+output characters ÷ 4 — the context weight its results add to the conversation. <b>Avg turn tokens</b> = mean total tokens (input+output) of the turns that invoked the tool; a turn using several tools counts toward each. Click a column header to sort.</p>
+     <div class="scroll" style="max-height:360px"><table id="tk-tools"><thead><tr>
+       <th data-k="name" data-t="s">Tool</th><th class="num" data-k="calls">Calls</th>
+       <th class="num" data-k="est_tokens_per_call">Est. tokens / call</th><th class="num" data-k="est_tokens">Est. total tokens</th>
+       <th class="num" data-k="share">% of tool payload</th><th class="num" data-k="turns_used">Turns using it</th>
+       <th class="num" data-k="avg_turn_tokens">Avg turn tokens</th>
+     </tr></thead><tbody></tbody></table></div></div>
+   <div class="card" style="margin-top:16px"><h3>Token consumption by thread</h3>
+     <p class="desc">Every conversation ranked by total tokens (input+output across its turns) with how long ago it was last active. Click a column header to sort · ${t.by_thread.length} threads</p>
+     <div class="scroll" style="max-height:420px"><table id="tk-threads"><thead><tr>
+       <th data-k="thread_id" data-t="s">Thread</th><th data-k="name" data-t="s">User</th>
+       <th class="num" data-k="turns">Turns</th><th class="num" data-k="tokens">Tokens</th>
+       <th class="num" data-k="tok_per_turn">Tok / turn</th><th data-k="last_ms">Last active (IST)</th>
+       <th class="num" data-k="hours_idle">Hrs since active</th>
+     </tr></thead><tbody></tbody></table></div></div>`);
   doughnut('tk-comp',['Input (fresh)','Cache reads','Output','Reasoning'],[T.input-T.cache_read>0?T.input-T.cache_read:T.input,T.cache_read,T.output,T.reasoning],{colors:[PAL[8],PAL[1],PAL[3],PAL[4]],fmtv:fmtTok});
   const pd=t.per_day;
   chart('tk-day',{type:'bar',data:{labels:pd.map(d=>fmtPeriod(d.date)),datasets:[
@@ -1006,6 +1075,48 @@ RENDER.tokens=()=>{
       .filter((v,i,a)=>v>0&&a.indexOf(v)===i).sort((a,b)=>a-b);
     lineChart('tk-scale',pts.map(u=>fmt(u)),[{label:'Monthly cost',data:pts.map(u=>+(cm*u).toFixed(0)),color:PAL[4],fill:true}],{fmtv:usd0});
   }
+  // tool-level token table — sortable, defaults to heaviest payload first
+  const tlTot=t.by_tool.reduce((a,x)=>a+x.est_tokens,0)||1;
+  const tlRows=t.by_tool.map(x=>({...x,share:x.est_tokens/tlTot*100}));
+  const tlTb=$('#tk-tools tbody'); let tlK='est_tokens',tlD=-1;
+  const tlDraw=()=>{
+    const rows=[...tlRows].sort((a,b)=>{
+      const va=a[tlK],vb=b[tlK];
+      return (typeof va==='string'?va.localeCompare(vb):(va??-Infinity)-(vb??-Infinity))*tlD;
+    });
+    tlTb.innerHTML=rows.map(x=>`<tr><td><b>${esc(x.name)}</b></td><td class="num">${fmt(x.calls)}</td><td class="num">${fmtTok(x.est_tokens_per_call)}</td><td class="num">${fmtTok(x.est_tokens)}</td><td class="num">${x.share.toFixed(1)}%</td><td class="num">${fmt(x.turns_used)}</td><td class="num">${fmtTok(x.avg_turn_tokens)}</td></tr>`).join('');
+  };
+  tlDraw();
+  $('#tk-tools thead').querySelectorAll('th').forEach(th=>th.onclick=()=>{
+    const k=th.dataset.k; if(!k)return;
+    if(k===tlK)tlD*=-1; else{tlK=k;tlD=th.dataset.t==='s'?1:-1;}
+    tlDraw();
+  });
+  // thread-level token table — sortable, defaults to heaviest thread first
+  const now=Date.now();
+  const thRows=t.by_thread.map(x=>({...x,
+    tok_per_turn:x.turns?Math.round(x.tokens/x.turns):0,
+    hours_idle:x.last_ms?Math.round((now-x.last_ms)/3600000*10)/10:null}));
+  const thTb=$('#tk-threads tbody'); let thK='tokens',thD=-1;
+  const thDraw=()=>{
+    const rows=[...thRows].sort((a,b)=>{
+      const va=a[thK],vb=b[thK];
+      return (typeof va==='string'?va.localeCompare(vb):(va??-Infinity)-(vb??-Infinity))*thD;
+    });
+    thTb.innerHTML=rows.map(r=>`<tr>
+      <td title="${esc(r.thread_id)}"><code>${esc(String(r.thread_id).slice(0,8))}</code></td>
+      <td>${esc(r.name||String(r.user_id||'').slice(0,8))}</td>
+      <td class="num">${fmt(r.turns)}</td><td class="num">${fmtTok(r.tokens)}</td>
+      <td class="num">${fmtTok(r.tok_per_turn)}</td>
+      <td>${r.last_ms?fmtDate(r.last_ms):'—'} <span style="color:var(--muted2)">· ${agoStr(r.last_ms)}</span></td>
+      <td class="num">${r.hours_idle==null?'—':fmt(r.hours_idle)}</td></tr>`).join('');
+  };
+  thDraw();
+  $('#tk-threads thead').querySelectorAll('th').forEach(th=>th.onclick=()=>{
+    const k=th.dataset.k; if(!k)return;
+    if(k===thK)thD*=-1; else{thK=k;thD=th.dataset.t==='s'?1:-1;}
+    thDraw();
+  });
 };
 
 RENDER.outcomes=()=>{
@@ -1068,7 +1179,7 @@ RENDER.quality=()=>{
   H('quality',`
    <div class="note">Automated eval pass over every turn — no LLM, all checks run from the archived turn JSON in <code>eval_checks.py</code>. <b>Tier A</b> rules are deterministic (high-precision) and counted as confirmed defects. <b>Tier B</b> rules are heuristic and shown as a <b>review queue</b> — candidates to confirm/dismiss, not counted in the headline. Click any turn row to read its full transcript.</div>
    <div class="grid g4" style="margin-bottom:16px">
-     ${kpi('Turns analysed',fmt(Q.total_turns),m.scope==='all'?'all users':'external only')}
+     ${kpi('Turns analysed',fmt(Q.total_turns),m.scope==='all'?'all users':m.scope==='internal'?'internal only':'external only')}
      ${kpi('Clean turns',Q.total_turns?Q.clean_pct+'%':'N/A',Q.total_turns?`${fmt(Q.total_turns-Q.flagged_turns)} of ${fmt(Q.total_turns)}`:'no turns in range',Q.total_turns&&Q.clean_pct<80?'warn':'')}
      ${kpi('Flagged · Tier A',fmt(Q.flagged_turns),'≥1 confirmed rule',Q.flagged_turns?'bad':'')}
      ${kpi('Review queue · Tier B',fmt(Q.tierB_candidate_turns),'heuristic candidates','cy')}

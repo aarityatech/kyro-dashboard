@@ -332,8 +332,12 @@ function buildData(raw, turnsIn, historyIn, granularity) {
       for (const ut of (t.user_text || [])) if (ut && ut.trim()) exchange.push({ r: 'u', t: clip(ut.trim(), 4000) });
       for (const it of (t.transcript || [])) if (it.k === 'resp' && (it.t || '').trim()) exchange.push({ r: 'a', t: clip(it.t.trim(), 4000) });
     }
+    let thTok = 0;
+    for (const t of tls) thTok += t.tokens.input + t.tokens.output;
     threadsTable.push({ thread_id: th, user_id: uid, name: info.name || '',
-                        turns: tl.length, start_ms: tls[0].ts_ms, samples, exchange });
+                        turns: tl.length, start_ms: tls[0].ts_ms,
+                        last_ms: tls[tls.length - 1].ts_ms, tokens: thTok,
+                        samples, exchange });
   }
   threadsTable.sort((a, b) => (b.turns - a.turns) || ((b.start_ms || 0) - (a.start_ms || 0)));
 
@@ -412,6 +416,18 @@ function buildData(raw, turnsIn, historyIn, granularity) {
   for (const t of turns) for (const x of t.tools) toolCalls.push(x);
   const toolsInvoked = new Counter();
   for (const x of toolCalls) toolsInvoked.add(x.name);
+  // Turn-token attribution: for each tool, the total/avg tokens of the TURNS
+  // that invoked it (a turn using several tools counts toward each of them).
+  const toolTurnTok = new Map();
+  for (const t of turns) {
+    if (!t.tools.length) continue;
+    const tk = t.tokens.input + t.tokens.output;
+    for (const n of new Set(t.tools.map(x => x.name))) {
+      let A = toolTurnTok.get(n);
+      if (!A) { A = { turns: 0, tokens: 0 }; toolTurnTok.set(n, A); }
+      A.turns++; A.tokens += tk;
+    }
+  }
   const perName = new Map();
   for (const x of toolCalls) {
     let P = perName.get(x.name);
@@ -425,7 +441,14 @@ function buildData(raw, turnsIn, historyIn, granularity) {
   const toolTable = [];
   for (const [name, P] of perName) {
     const lat = [...P.latencies].sort((a, b) => a - b);
+    const payloadChars = sum(P.inputs) + sum(P.outputs);
+    const tt = toolTurnTok.get(name) || { turns: 0, tokens: 0 };
     toolTable.push({
+      // ~4 chars/token heuristic over tool input+output payloads
+      est_tokens: Math.round(payloadChars / 4),
+      est_tokens_per_call: P.calls ? Math.round(payloadChars / 4 / P.calls) : 0,
+      turns_used: tt.turns,
+      avg_turn_tokens: tt.turns ? Math.round(tt.tokens / tt.turns) : 0,
       name, calls: P.calls, errors: P.errors,
       error_rate: P.calls ? r1(P.errors / P.calls * 100) : 0,
       lat_p50: lat.length ? Math.round(pct(lat, 0.5)) : 0,
@@ -636,6 +659,37 @@ function buildData(raw, turnsIn, historyIn, granularity) {
   const eligSize = sum(elig.map(c => c.size));
   const m1Overall = eligSize ? r1(sum(elig.map(c => c.m1_retained)) / eligSize * 100) : null;
 
+  // Weekly retention cohort matrix — Sunday-to-Saturday weeks (not ISO weeks).
+  // Cohort = the Sun-start week of a user's FIRST message; each cell = how many
+  // of that cohort were active in a given later week. Computed over full
+  // history so the date filter never relabels a user's first week.
+  const sunWeekOf = day => {
+    const e = Date.parse(day + 'T00:00:00Z');
+    const dn = new Date(e).getUTCDay();               // 0 = Sunday
+    return new Date(e - dn * 86400000).toISOString().slice(0, 10);
+  };
+  const userSunWeeks = new Map();                     // user_id -> Set(weekStartDay)
+  for (const t of history) {
+    if (!t.ts_ms) continue;
+    const w = sunWeekOf(istParts(t.ts_ms).day);
+    if (!userSunWeeks.has(t.user_id)) userSunWeeks.set(t.user_id, new Set());
+    userSunWeeks.get(t.user_id).add(w);
+  }
+  const sunWeeks = [...new Set([...userSunWeeks.values()].flatMap(s => [...s]))].sort();
+  const sunCohorts = new Map(sunWeeks.map(w => [w, []]));
+  for (const [u, ws] of userSunWeeks) sunCohorts.get([...ws].sort()[0]).push(u);
+  const retentionWeekly = {
+    weeks: sunWeeks,
+    matrix: sunWeeks.map(w => {
+      const us = sunCohorts.get(w) || [];
+      return {
+        week: w, size: us.length,
+        // null below the diagonal (weeks before the cohort's first week)
+        cells: sunWeeks.map(w2 => w2 < w ? null : us.filter(u => userSunWeeks.get(u).has(w2)).length),
+      };
+    }).filter(r => r.size > 0),
+  };
+
   const ntTotal = turns.length || 1;
   const toolInvokedPct = r1(turns.filter(t => t.tools.length > 0).length / ntTotal * 100);
   const dataToolInvokedPct = r1(turns.filter(t => t.tools.some(x => !CLIENT_TOOLS.has(x.name))).length / ntTotal * 100);
@@ -817,6 +871,14 @@ function buildData(raw, turnsIn, historyIn, granularity) {
       cache_hit_ratio: cacheHitRatio,
       cost,
       projection,
+      by_tool: [...toolTable].sort((a, b) => b.est_tokens - a.est_tokens)
+        .map(x => ({ name: x.name, calls: x.calls, est_tokens: x.est_tokens,
+                     est_tokens_per_call: x.est_tokens_per_call,
+                     turns_used: x.turns_used, avg_turn_tokens: x.avg_turn_tokens })),
+      by_thread: threadsTable
+        .map(x => ({ thread_id: x.thread_id, user_id: x.user_id, name: x.name,
+                     turns: x.turns, tokens: x.tokens, last_ms: x.last_ms }))
+        .sort((a, b) => b.tokens - a.tokens),
     },
     tools: {
       invoked: toolsInvoked.mostCommon(30).map(([name, count]) => ({ name, count })),
@@ -844,6 +906,7 @@ function buildData(raw, turnsIn, historyIn, granularity) {
       data_tool_invoked_pct: dataToolInvokedPct,
       skill_invoked_pct: skillInvokedPct,
       m1: { by_cohort: m1Cohorts, overall_pct: m1Overall, eligible_cohorts: elig.length },
+      retention_weekly: retentionWeekly,
     },
     personas: {
       table: personasTable,
